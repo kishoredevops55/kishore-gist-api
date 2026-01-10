@@ -171,8 +171,6 @@ jobs:
           only-severities: critical,high
           exit-code: false
         continue-on-error: true
-          format: spdx-json
-          output-file: sbom.spdx.json
       
       - name: Login to registry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
