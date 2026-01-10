@@ -1,15 +1,11 @@
 name: CD Pipeline (Local Kind Cluster)
 
 on:
-  workflow_run:
-    workflows: ["CI Pipeline"]
-    types: [completed]
-    branches: [main]
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:  # Manual trigger only
 
 jobs:
   deploy-to-kind:
-    runs-on: [kishore-poc]  # Target your local runner
+    runs-on: [self-hosted, Windows, X64]  # Match your runner labels
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     
     steps:
