@@ -158,25 +158,25 @@ jobs:
             if (Test-Path $opensslPath) {
               Write-Host "Using OpenSSL from Git installation..."
               
-              # Create OpenSSL config
-              $opensslConf = @"
-[req]
-distinguished_name = req_distinguished_name
-x509_extensions = v3_req
-prompt = no
-[req_distinguished_name]
-CN = ${{ env.CUSTOM_DNS }}
-O = Kishore DevOps
-[v3_req]
-keyUsage = keyEncipherment, dataEncipherment
-extendedKeyUsage = serverAuth
-subjectAltName = @alt_names
-[alt_names]
-DNS.1 = ${{ env.CUSTOM_DNS }}
-DNS.2 = gists.local
-DNS.3 = localhost
-"@
-              $opensslConf | Out-File -FilePath openssl.cnf -Encoding ascii
+              # Create OpenSSL config file
+              $configLines = @(
+                "[req]",
+                "distinguished_name = req_distinguished_name",
+                "x509_extensions = v3_req",
+                "prompt = no",
+                "[req_distinguished_name]",
+                "CN = ${{ env.CUSTOM_DNS }}",
+                "O = Kishore DevOps",
+                "[v3_req]",
+                "keyUsage = keyEncipherment, dataEncipherment",
+                "extendedKeyUsage = serverAuth",
+                "subjectAltName = @alt_names",
+                "[alt_names]",
+                "DNS.1 = ${{ env.CUSTOM_DNS }}",
+                "DNS.2 = gists.local",
+                "DNS.3 = localhost"
+              )
+              $configLines | Out-File -FilePath openssl.cnf -Encoding ascii
               
               # Generate certificate and key
               & $opensslPath req -x509 -nodes -days 365 -newkey rsa:2048 `
