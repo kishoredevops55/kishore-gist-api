@@ -1,0 +1,117 @@
+<!-- 
+============================================================================
+GRAFANA FARO - REAL USER MONITORING (RUM)
+Paste this script in your frontend application for browser monitoring
+============================================================================
+-->
+<script type="module">
+  import { initializeFaro, getWebInstrumentations } from '@grafana/faro-web-sdk';
+  import { TracingInstrumentation } from '@grafana/faro-web-tracing';
+
+  // Initialize Faro (Grafana's RUM solution)
+  const faro = initializeFaro({
+    // Required: URL of the Grafana Faro collector
+    url: 'https://kishoregrafana.local/collect',
+    
+    // App identification
+    app: {
+      name: 'github-gists-api-frontend',
+      version: '1.0.0',
+      environment: 'production'
+    },
+    
+    // Instrumentations
+    instrumentations: [
+      // Core web vitals, errors, console logs, etc.
+      ...getWebInstrumentations({
+        captureConsole: true,
+        captureConsoleDisabledLevels: [],
+      }),
+      
+      // Distributed tracing (connects frontend traces to backend)
+      new TracingInstrumentation({
+        instrumentationOptions: {
+          // Propagate trace context to backend
+          propagateTraceHeaderCorsUrls: [
+            /https:\/\/gists\.kishore\.local\/.*/,
+            /https:\/\/gists\.local\/.*/,
+          ],
+        },
+      }),
+    ],
+    
+    // Session tracking
+    sessionTracking: {
+      enabled: true,
+      samplingRate: 1, // 100% sampling for development
+    },
+  });
+
+  // Export for use in your app
+  window.faro = faro;
+</script>
+
+<!--
+============================================================================
+INSTALLATION (NPM)
+============================================================================
+
+npm install @grafana/faro-web-sdk @grafana/faro-web-tracing
+
+============================================================================
+REACT INTEGRATION EXAMPLE
+============================================================================
+
+import { initializeFaro, getWebInstrumentations, ReactIntegration } from '@grafana/faro-react';
+import { TracingInstrumentation } from '@grafana/faro-web-tracing';
+
+initializeFaro({
+  url: 'https://kishoregrafana.local/collect',
+  app: {
+    name: 'github-gists-api-frontend',
+    version: '1.0.0',
+  },
+  instrumentations: [
+    ...getWebInstrumentations(),
+    new TracingInstrumentation(),
+    new ReactIntegration(),
+  ],
+});
+
+============================================================================
+METRICS COLLECTED
+============================================================================
+
+Web Vitals:
+  - LCP (Largest Contentful Paint)
+  - FID (First Input Delay)  
+  - CLS (Cumulative Layout Shift)
+  - TTFB (Time to First Byte)
+  - FCP (First Contentful Paint)
+
+User Interactions:
+  - Click events
+  - Navigation events
+  - Form submissions
+
+Errors:
+  - JavaScript errors
+  - Unhandled promise rejections
+  - Console errors
+
+Network:
+  - Fetch/XHR requests
+  - Response times
+  - Error rates
+
+Sessions:
+  - Session duration
+  - Page views
+  - User journeys
+
+============================================================================
+GRAFANA DASHBOARD FOR RUM
+Import dashboard ID: 17590 for Web Vitals
+Import dashboard ID: 17591 for User Sessions
+============================================================================
+-->

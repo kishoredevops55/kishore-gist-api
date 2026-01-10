@@ -1,46 +1,119 @@
 {
   "dashboard": {
-    "title": "GitHub Gists API Monitoring",
+    "title": "GitHub Gists API - Quick View",
+    "uid": "github-gists-api-quick",
     "timezone": "browser",
+    "refresh": "10s",
+    "tags": ["github-gists-api", "api", "monitoring"],
     "panels": [
       {
-        "title": "Request Rate",
-        "type": "graph",
-        "targets": [
-          {
-            "expr": "rate(http_requests_total{job=\"github-gists-api\"}[5m])",
-            "legendFormat": "{{method}} {{path}}"
-          }
-        ]
-      },
-      {
-        "title": "Response Time (p95)",
-        "type": "graph",
-        "targets": [
-          {
-            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
-            "legendFormat": "p95"
-          }
-        ]
-      },
-      {
-        "title": "Error Rate",
-        "type": "graph",
-        "targets": [
-          {
-            "expr": "rate(http_requests_total{status=~\"5..\"}[5m])",
-            "legendFormat": "5xx errors"
-          }
-        ]
-      },
-      {
-        "title": "Active Pods",
+        "id": 1,
+        "title": "🟢 Running Pods",
         "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
         "targets": [
           {
-            "expr": "count(up{job=\"github-gists-api\"} == 1)"
+            "expr": "count(up{job=~\".*github-gists.*\"} == 1)",
+            "refId": "A"
           }
         ]
+      },
+      {
+        "id": 2,
+        "title": "📈 Request Rate",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 10, "x": 4, "y": 0 },
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{job=~\".*github-gists.*\"}[5m])) by (endpoint)",
+            "legendFormat": "{{endpoint}}",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "⏱️ Response Time (P95)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 10, "x": 14, "y": 0 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) * 1000",
+            "legendFormat": "P95 Latency (ms)",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "❌ Error Rate",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 0, "y": 4 },
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m])) * 100",
+            "legendFormat": "Error %",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "💾 Cache Hit Rate",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 },
+        "targets": [
+          {
+            "expr": "sum(rate(cache_hits_total[5m])) / (sum(rate(cache_hits_total[5m])) + sum(rate(cache_misses_total[5m]))) * 100",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 50, "color": "yellow" },
+                { "value": 80, "color": "green" }
+              ]
+            },
+            "unit": "percent",
+            "max": 100
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "🐙 GitHub API Requests",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 8, "x": 8, "y": 8 },
+        "targets": [
+          {
+            "expr": "sum(rate(github_api_requests_total[5m])) by (status)",
+            "legendFormat": "Status {{status}}",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "🌐 Synthetic Probe Status",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 8, "x": 16, "y": 8 },
+        "targets": [
+          {
+            "expr": "probe_success{job=\"blackbox-exporter\"}",
+            "legendFormat": "{{instance}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+            ]
+          }
+        }
       }
     ]
   }

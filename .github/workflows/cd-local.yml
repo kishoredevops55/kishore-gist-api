@@ -141,3 +141,191 @@ jobs:
           Write-Host "Or use curl:"
           Write-Host "  curl.exe -k https://gists.kishore.local/health"
           Write-Host ""
+
+      # ========================================================================
+      # MONITORING STACK DEPLOYMENT
+      # ========================================================================
+      - name: Add Helm Repositories
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>$null
+          helm repo add grafana https://grafana.github.io/helm-charts 2>$null
+          helm repo update
+          Write-Host "[OK] Helm repositories configured" -ForegroundColor Green
+
+      - name: Create Monitoring Namespace
+        run: |
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label namespace monitoring istio-injection=enabled --overwrite 2>$null
+          Write-Host "[OK] Monitoring namespace created" -ForegroundColor Green
+
+      - name: Setup Grafana Credentials Secret
+        env:
+          GRAFANA_ADMIN_USER: ${{ secrets.GRAFANA_ADMIN_USER }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: |
+          # Use secrets or default values
+          $grafanaUser = if ($env:GRAFANA_ADMIN_USER) { $env:GRAFANA_ADMIN_USER } else { "admin" }
+          $grafanaPass = if ($env:GRAFANA_ADMIN_PASSWORD) { $env:GRAFANA_ADMIN_PASSWORD } else { "admin123" }
+          
+          # Create Grafana credentials secret
+          kubectl delete secret grafana-credentials -n monitoring --ignore-not-found
+          kubectl create secret generic grafana-credentials `
+            --from-literal=admin-user=$grafanaUser `
+            --from-literal=admin-password=$grafanaPass `
+            -n monitoring
+          
+          Write-Host "[OK] Grafana credentials configured from GitHub secrets" -ForegroundColor Green
+
+      - name: Generate Grafana TLS Certificate
+        shell: cmd
+        run: |
+          kubectl get secret grafana-tls-secret -n istio-system >nul 2>&1 && (echo [OK] Grafana TLS certificate exists && exit /b 0)
+          echo Generating Grafana TLS certificate...
+          echo [req] > grafana-cert.conf
+          echo distinguished_name = req_distinguished_name >> grafana-cert.conf
+          echo x509_extensions = v3_req >> grafana-cert.conf
+          echo prompt = no >> grafana-cert.conf
+          echo [req_distinguished_name] >> grafana-cert.conf
+          echo CN = kishoregrafana.local >> grafana-cert.conf
+          echo O = Kishore >> grafana-cert.conf
+          echo [v3_req] >> grafana-cert.conf
+          echo keyUsage = digitalSignature, keyEncipherment >> grafana-cert.conf
+          echo extendedKeyUsage = serverAuth >> grafana-cert.conf
+          echo subjectAltName = @alt_names >> grafana-cert.conf
+          echo [alt_names] >> grafana-cert.conf
+          echo DNS.1 = kishoregrafana.local >> grafana-cert.conf
+          echo DNS.2 = grafana.local >> grafana-cert.conf
+          echo DNS.3 = *.monitoring.local >> grafana-cert.conf
+          "C:\Program Files\Git\usr\bin\openssl.exe" req -x509 -nodes -days 365 -newkey rsa:2048 -keyout grafana-tls.key -out grafana-tls.crt -config grafana-cert.conf -extensions v3_req 2>nul
+          kubectl create secret tls grafana-tls-secret --cert=grafana-tls.crt --key=grafana-tls.key -n istio-system --dry-run=client -o yaml | kubectl apply -f -
+          del grafana-cert.conf grafana-tls.key grafana-tls.crt 2>nul
+          echo [OK] Grafana TLS certificate created
+
+      - name: Deploy Tempo (Distributed Tracing)
+        run: |
+          helm upgrade --install tempo grafana/tempo `
+            --namespace monitoring `
+            --values monitoring/tempo-values.yaml `
+            --wait --timeout 5m0s
+          Write-Host "[OK] Tempo deployed" -ForegroundColor Green
+
+      - name: Deploy Loki (Log Aggregation)
+        run: |
+          helm upgrade --install loki grafana/loki-stack `
+            --namespace monitoring `
+            --values monitoring/loki-values.yaml `
+            --wait --timeout 5m0s
+          Write-Host "[OK] Loki deployed" -ForegroundColor Green
+
+      - name: Deploy Prometheus + Grafana Stack
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: |
+          $grafanaPass = if ($env:GRAFANA_ADMIN_PASSWORD) { $env:GRAFANA_ADMIN_PASSWORD } else { "admin123" }
+          
+          helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack `
+            --namespace monitoring `
+            --values monitoring/kube-prometheus-stack-values.yaml `
+            --set grafana.adminPassword=$grafanaPass `
+            --set grafana.admin.existingSecret=grafana-credentials `
+            --set grafana.admin.userKey=admin-user `
+            --set grafana.admin.passwordKey=admin-password `
+            --wait --timeout 10m0s
+          Write-Host "[OK] Prometheus + Grafana deployed" -ForegroundColor Green
+
+      - name: Deploy Synthetic Monitoring
+        run: |
+          kubectl apply -f monitoring/synthetic-monitoring.yaml -n monitoring
+          Write-Host "[OK] Synthetic monitoring deployed" -ForegroundColor Green
+
+      - name: Import Grafana Dashboards
+        run: |
+          kubectl create configmap github-gists-api-dashboard `
+            --from-file=github-gists-api.json=monitoring/grafana-complete-dashboard.json `
+            --namespace monitoring `
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label configmap github-gists-api-dashboard grafana_dashboard=1 -n monitoring --overwrite
+          Write-Host "[OK] Grafana dashboards imported" -ForegroundColor Green
+
+      - name: Configure Grafana Istio Gateway
+        run: |
+          $grafanaGateway = @"
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: grafana-gateway
+  namespace: monitoring
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "kishoregrafana.local"
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: grafana-tls-secret
+    hosts:
+    - "kishoregrafana.local"
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: grafana-vs
+  namespace: monitoring
+spec:
+  hosts:
+  - "kishoregrafana.local"
+  gateways:
+  - grafana-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: kube-prometheus-stack-grafana.monitoring.svc.cluster.local
+        port:
+          number: 80
+"@
+          $grafanaGateway | kubectl apply -f -
+          Write-Host "[OK] Grafana Istio Gateway configured" -ForegroundColor Green
+
+      - name: Display Monitoring Access Info
+        run: |
+          $ingressIP = kubectl get svc istio-ingressgateway -n istio-system -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
+          if (-not $ingressIP) { $ingressIP = "127.0.0.1 (via port-forward)" }
+          
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "MONITORING STACK DEPLOYED!"
+          Write-Host "========================================"
+          Write-Host ""
+          Write-Host "Add to Windows hosts file (C:\Windows\System32\drivers\etc\hosts):"
+          Write-Host "  $ingressIP    kishoregrafana.local"
+          Write-Host "  $ingressIP    gists.kishore.local"
+          Write-Host ""
+          Write-Host "Grafana Access:"
+          Write-Host "  URL:      https://kishoregrafana.local"
+          Write-Host "  User:     admin (or from GRAFANA_ADMIN_USER secret)"
+          Write-Host "  Password: From GRAFANA_ADMIN_PASSWORD secret"
+          Write-Host ""
+          Write-Host "API Access:"
+          Write-Host "  https://gists.kishore.local/health"
+          Write-Host "  https://gists.kishore.local/{username}"
+          Write-Host ""
+          Write-Host "Monitoring Components:"
+          Write-Host "  - Prometheus (Metrics)"
+          Write-Host "  - Grafana (Visualization)"
+          Write-Host "  - Loki (Logs)"
+          Write-Host "  - Tempo (Traces)"
+          Write-Host "  - Blackbox Exporter (Synthetic)"
+          Write-Host ""
+

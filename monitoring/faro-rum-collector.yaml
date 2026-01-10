@@ -1,0 +1,184 @@
+# =============================================================================
+# Grafana Faro Collector - Real User Monitoring (RUM)
+# Collects frontend performance metrics and traces
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: faro-collector-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    server:
+      http_listen_port: 12347
+      grpc_listen_port: 12348
+    
+    # Log config  
+    log_level: info
+    
+    # Receivers - accept data from browsers
+    receivers:
+      faro:
+        # CORS configuration
+        cors:
+          allowed_origins:
+            - "https://gists.kishore.local"
+            - "https://gists.local"
+            - "http://localhost:*"
+          allowed_headers:
+            - "Content-Type"
+            - "X-Faro-Session-ID"
+          max_age: 7200
+        
+        # Rate limiting
+        rate_limiting:
+          enabled: true
+          rate: 100
+          burst: 200
+    
+    # Exporters - send data to backends
+    exporters:
+      # Send logs to Loki
+      loki:
+        endpoint: "http://loki:3100/loki/api/v1/push"
+        labels:
+          app: "faro-rum"
+          source: "browser"
+      
+      # Send traces to Tempo
+      otlp:
+        endpoint: "tempo:4317"
+        tls:
+          insecure: true
+      
+      # Send metrics to Prometheus (via remote write)
+      prometheus:
+        endpoint: "0.0.0.0:9090"
+        namespace: faro
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: faro-collector
+  namespace: monitoring
+  labels:
+    app: faro-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: faro-collector
+  template:
+    metadata:
+      labels:
+        app: faro-collector
+    spec:
+      containers:
+        - name: faro-collector
+          image: grafana/faro-collector:latest
+          ports:
+            - containerPort: 12347
+              name: http
+              protocol: TCP
+            - containerPort: 12348
+              name: grpc
+              protocol: TCP
+            - containerPort: 9090
+              name: metrics
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/faro
+          args:
+            - --config.file=/etc/faro/config.yaml
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 12347
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 12347
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: faro-collector-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: faro-collector
+  namespace: monitoring
+  labels:
+    app: faro-collector
+spec:
+  type: ClusterIP
+  ports:
+    - port: 12347
+      targetPort: 12347
+      name: http
+      protocol: TCP
+    - port: 12348
+      targetPort: 12348
+      name: grpc
+      protocol: TCP
+    - port: 9090
+      targetPort: 9090
+      name: metrics
+      protocol: TCP
+  selector:
+    app: faro-collector
+
+---
+# ServiceMonitor for Prometheus to scrape Faro metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: faro-collector
+  namespace: monitoring
+  labels:
+    app: faro-collector
+spec:
+  selector:
+    matchLabels:
+      app: faro-collector
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+
+---
+# Istio VirtualService to expose Faro collector
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: faro-collector-vs
+  namespace: monitoring
+spec:
+  hosts:
+    - "kishoregrafana.local"
+  gateways:
+    - grafana-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /collect
+      route:
+        - destination:
+            host: faro-collector.monitoring.svc.cluster.local
+            port:
+              number: 12347
