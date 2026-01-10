@@ -143,45 +143,36 @@ jobs:
           Write-Host ""
 
       # ========================================================================
-      # MONITORING STACK DEPLOYMENT
+      # MONITORING STACK DEPLOYMENT (Optional - continues on error)
       # ========================================================================
       - name: Add Helm Repositories
+        continue-on-error: true
         run: |
-          $maxRetries = 3
-          $retryCount = 0
-          $success = $false
+          $ErrorActionPreference = "Continue"
           
-          while (-not $success -and $retryCount -lt $maxRetries) {
-            try {
-              Write-Host "Attempt $($retryCount + 1) of $maxRetries - Adding Helm repos..."
-              
-              # Test DNS resolution first
-              $dnsTest = Resolve-DnsName "prometheus-community.github.io" -ErrorAction SilentlyContinue
-              if (-not $dnsTest) {
-                Write-Host "DNS resolution failed, waiting 10s..." -ForegroundColor Yellow
-                Start-Sleep -Seconds 10
-                $retryCount++
-                continue
-              }
-              
-              helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update 2>&1
-              helm repo add grafana https://grafana.github.io/helm-charts --force-update 2>&1
-              helm repo update 2>&1
-              $success = $true
-              Write-Host "[OK] Helm repositories configured" -ForegroundColor Green
-            } catch {
-              Write-Host "Failed: $_" -ForegroundColor Yellow
-              $retryCount++
-              if ($retryCount -lt $maxRetries) {
-                Write-Host "Retrying in 15 seconds..."
-                Start-Sleep -Seconds 15
-              }
-            }
+          Write-Host "Adding Helm repositories..." -ForegroundColor Cyan
+          
+          # Try to add prometheus-community repo
+          $promResult = helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] prometheus-community repo added" -ForegroundColor Green
+          } else {
+            Write-Host "[WARN] prometheus-community repo failed: $promResult" -ForegroundColor Yellow
           }
           
-          if (-not $success) {
-            Write-Host "[WARN] Helm repos may not be configured - will try to use cached charts" -ForegroundColor Yellow
+          # Try to add grafana repo
+          $grafanaResult = helm repo add grafana https://grafana.github.io/helm-charts --force-update 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] grafana repo added" -ForegroundColor Green
+          } else {
+            Write-Host "[WARN] grafana repo failed: $grafanaResult" -ForegroundColor Yellow
           }
+          
+          # Try to update repos
+          helm repo update 2>&1
+          
+          Write-Host "[INFO] Helm repo setup complete (errors are non-fatal)" -ForegroundColor Cyan
+          exit 0
 
       - name: Create Monitoring Namespace
         run: |
