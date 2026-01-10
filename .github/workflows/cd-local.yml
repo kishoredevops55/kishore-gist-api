@@ -36,13 +36,18 @@ jobs:
           Write-Host "[OK] Application deployed" -ForegroundColor Green
 
       - name: Setup GitHub Token Secret
-        if: ${{ secrets.GH_API_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_API_TOKEN }}
         run: |
-          kubectl delete secret github-token -n ${{ env.NAMESPACE }} --ignore-not-found
-          kubectl create secret generic github-token --from-literal=GITHUB_TOKEN=${{ secrets.GH_API_TOKEN }} -n ${{ env.NAMESPACE }}
-          kubectl rollout restart deployment/github-gists-api -n ${{ env.NAMESPACE }}
-          kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=2m
-          Write-Host "[OK] GitHub token secret configured (5000 req/hour)" -ForegroundColor Green
+          if ($env:GH_TOKEN) {
+            kubectl delete secret github-token -n ${{ env.NAMESPACE }} --ignore-not-found
+            kubectl create secret generic github-token --from-literal=GITHUB_TOKEN=$env:GH_TOKEN -n ${{ env.NAMESPACE }}
+            kubectl rollout restart deployment/github-gists-api -n ${{ env.NAMESPACE }}
+            kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=2m
+            Write-Host "[OK] GitHub token secret configured (5000 req/hour)" -ForegroundColor Green
+          } else {
+            Write-Host "[SKIP] No GH_API_TOKEN secret - using 60 req/hour limit" -ForegroundColor Yellow
+          }
 
       - name: Setup MetalLB for LoadBalancer IP
         run: |
