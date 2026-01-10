@@ -236,14 +236,14 @@ jobs:
           foreach ($component in $components) {
             $podCount = (kubectl get pods -n monitoring -l app=$component --no-headers 2>$null | Measure-Object).Count
             if ($podCount -gt 0) {
-              Write-Host "  ✓ $component - Running" -ForegroundColor Green
+              Write-Host "  [OK] $component - Running" -ForegroundColor Green
             } else {
-              Write-Host "  ⚠ $component - Not found" -ForegroundColor Yellow
+              Write-Host "  [WARN] $component - Not found" -ForegroundColor Yellow
             }
           }
           
           Write-Host ""
-          Write-Host "[OK] Monitoring stack verification complete" -ForegroundColor Green
+          Write-Host "Monitoring stack verification complete" -ForegroundColor Green
 
       - name: Display Monitoring Access Info
         run: |
