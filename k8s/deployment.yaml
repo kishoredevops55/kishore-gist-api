@@ -40,8 +40,8 @@ spec:
       
       containers:
       - name: api
-        image: YOUR_DOCKERHUB_USERNAME/github-gists-api:latest
-        imagePullPolicy: Always
+        image: github-gists-api:latest
+        imagePullPolicy: IfNotPresent
         
         ports:
         - containerPort: 8080

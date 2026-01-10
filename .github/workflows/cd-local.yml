@@ -25,11 +25,10 @@ jobs:
         run: |
           kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
       
-      - name: Load image into Kind cluster (kind-dev)
+      - name: Load local image into Kind cluster (kind-dev)
         run: |
-          # Load the image from Docker Desktop into Kind
-          kind load docker-image ${{ secrets.DOCKERHUB_USERNAME }}/github-gists-api:${{ github.sha }} --name kind-dev
-        continue-on-error: true
+          # Load the locally built image into Kind (expects image tag github-gists-api:latest)
+          kind load docker-image github-gists-api:latest --name kind-dev
       
       - name: Create DockerHub pull secret
         run: |
@@ -40,18 +39,9 @@ jobs:
             --namespace=production `
             --dry-run=client -o yaml | kubectl apply -f -
       
-      - name: Update deployment image
-        run: |
-          # Update the deployment YAML with correct image
-          $deploymentFile = "k8s/deployment.yaml"
-          $content = Get-Content $deploymentFile -Raw
-          $content = $content -replace 'YOUR_DOCKERHUB_USERNAME', '${{ secrets.DOCKERHUB_USERNAME }}'
-          $content = $content -replace ':latest', ':${{ github.sha }}'
-          Set-Content -Path "$deploymentFile.tmp" -Value $content
-      
       - name: Deploy to Kind cluster
         run: |
-          kubectl apply -f k8s/deployment.yaml.tmp
+          kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/servicemonitor.yaml
           kubectl rollout status deployment/github-gists-api -n production --timeout=3m
       
