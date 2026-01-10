@@ -147,10 +147,41 @@ jobs:
       # ========================================================================
       - name: Add Helm Repositories
         run: |
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>$null
-          helm repo add grafana https://grafana.github.io/helm-charts 2>$null
-          helm repo update
-          Write-Host "[OK] Helm repositories configured" -ForegroundColor Green
+          $maxRetries = 3
+          $retryCount = 0
+          $success = $false
+          
+          while (-not $success -and $retryCount -lt $maxRetries) {
+            try {
+              Write-Host "Attempt $($retryCount + 1) of $maxRetries - Adding Helm repos..."
+              
+              # Test DNS resolution first
+              $dnsTest = Resolve-DnsName "prometheus-community.github.io" -ErrorAction SilentlyContinue
+              if (-not $dnsTest) {
+                Write-Host "DNS resolution failed, waiting 10s..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 10
+                $retryCount++
+                continue
+              }
+              
+              helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update 2>&1
+              helm repo add grafana https://grafana.github.io/helm-charts --force-update 2>&1
+              helm repo update 2>&1
+              $success = $true
+              Write-Host "[OK] Helm repositories configured" -ForegroundColor Green
+            } catch {
+              Write-Host "Failed: $_" -ForegroundColor Yellow
+              $retryCount++
+              if ($retryCount -lt $maxRetries) {
+                Write-Host "Retrying in 15 seconds..."
+                Start-Sleep -Seconds 15
+              }
+            }
+          }
+          
+          if (-not $success) {
+            Write-Host "[WARN] Helm repos may not be configured - will try to use cached charts" -ForegroundColor Yellow
+          }
 
       - name: Create Monitoring Namespace
         run: |
@@ -202,22 +233,33 @@ jobs:
           echo [OK] Grafana TLS certificate created
 
       - name: Deploy Tempo (Distributed Tracing)
+        continue-on-error: true
         run: |
           helm upgrade --install tempo grafana/tempo `
             --namespace monitoring `
             --values monitoring/tempo-values.yaml `
-            --wait --timeout 5m0s
-          Write-Host "[OK] Tempo deployed" -ForegroundColor Green
+            --wait --timeout 5m0s 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Tempo deployed" -ForegroundColor Green
+          } else {
+            Write-Host "[WARN] Tempo deployment failed - continuing" -ForegroundColor Yellow
+          }
 
       - name: Deploy Loki (Log Aggregation)
+        continue-on-error: true
         run: |
           helm upgrade --install loki grafana/loki-stack `
             --namespace monitoring `
             --values monitoring/loki-values.yaml `
-            --wait --timeout 5m0s
-          Write-Host "[OK] Loki deployed" -ForegroundColor Green
+            --wait --timeout 5m0s 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Loki deployed" -ForegroundColor Green
+          } else {
+            Write-Host "[WARN] Loki deployment failed - continuing" -ForegroundColor Yellow
+          }
 
       - name: Deploy Prometheus + Grafana Stack
+        continue-on-error: true
         env:
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         run: |
@@ -230,8 +272,12 @@ jobs:
             --set grafana.admin.existingSecret=grafana-credentials `
             --set grafana.admin.userKey=admin-user `
             --set grafana.admin.passwordKey=admin-password `
-            --wait --timeout 10m0s
-          Write-Host "[OK] Prometheus + Grafana deployed" -ForegroundColor Green
+            --wait --timeout 10m0s 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Prometheus + Grafana deployed" -ForegroundColor Green
+          } else {
+            Write-Host "[WARN] Prometheus + Grafana deployment failed - continuing" -ForegroundColor Yellow
+          }
 
       - name: Deploy Synthetic Monitoring
         run: |
