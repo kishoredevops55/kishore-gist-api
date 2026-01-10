@@ -25,6 +25,15 @@ jobs:
           export KUBECONFIG=kubeconfig.yml
           kubectl config use-context production
       
+      - name: Create DockerHub pull secret
+        run: |
+          kubectl create secret docker-registry dockerhub-secret \
+            --docker-server=https://index.docker.io/v1/ \
+            --docker-username=${{ secrets.DOCKERHUB_USERNAME }} \
+            --docker-password=${{ secrets.DOCKERHUB_TOKEN }} \
+            --namespace=production \
+            --dry-run=client -o yaml | kubectl apply -f -
+      
       - name: Install Helm
         uses: azure/setup-helm@v3
         with:
@@ -34,7 +43,10 @@ jobs:
         run: |
           helm template github-gists-api ./helm \
             --set image.tag=${{ github.sha }} \
-            --set image.repository=ghcr.io/${{ github.repository }} \
+            --set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/github-gists-api \
+            --set image.pullSecrets[0].name=dockerhub-secret \
+            --set metrics.enabled=true \
+            --set metrics.serviceMonitor.enabled=true \
             --namespace production \
             --values ./helm/values-prod.yaml > rendered-manifest.yaml
       
@@ -51,3 +63,13 @@ jobs:
         run: |
           kubectl get pods -n production -l app=github-gists-api
           kubectl get svc -n production -l app=github-gists-api
+      
+      - name: Check pod logs
+        run: |
+          kubectl logs -n production -l app=github-gists-api --tail=50
+      
+      - name: Verify metrics endpoint
+        run: |
+          kubectl port-forward -n production svc/github-gists-api 8080:80 &
+          sleep 5
+          curl http://localhost:8080/metrics || echo "Metrics endpoint not yet available"

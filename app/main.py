@@ -3,19 +3,42 @@ GitHub Gists API
 Simple FastAPI app to fetch public GitHub gists for any user
 """
 import logging
+import time
 from typing import List, Dict, Any
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, HTTPException, Path
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Path, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GITHUB_API_URL = "https://api.github.com"
 TIMEOUT = 10.0
+
+# Prometheus metrics
+REQUEST_COUNT = Counter(
+    'http_requests_total',
+    'Total HTTP requests',
+    ['method', 'endpoint', 'status']
+)
+REQUEST_LATENCY = Histogram(
+    'http_request_duration_seconds',
+    'HTTP request latency',
+    ['method', 'endpoint']
+)
+ACTIVE_REQUESTS = Gauge(
+    'http_requests_active',
+    'Currently active HTTP requests'
+)
+GITHUB_API_REQUESTS = Counter(
+    'github_api_requests_total',
+    'Total GitHub API requests',
+    ['status']
+)
 
 
 class GistInfo(BaseModel):
@@ -40,13 +63,49 @@ http_client: httpx.AsyncClient | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize HTTP client on startup, close on shutdown"""
-    global http_client
+    gmiddleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Middleware to track request metrics"""
+    ACTIVE_REQUESTS.inc()
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+        duration = time.time() - start_time
+        
+        # Record metrics
+        REQUEST_COUNT.labels(
+            method=request.method,
+            endpoint=request.url.path,
+            status=response.status_code
+        ).inc()
+        
+        REQUEST_LATENCY.labels(
+            method=request.method,
+            endpoint=request.url.path
+        ).observe(duration)
+        
+        return response
+    finally:
+        ACTIVE_REQUESTS.dec()
+
+
+@app.lobal http_client
     http_client = httpx.AsyncClient(
         timeout=TIMEOUT,
         follow_redirects=True,
         headers={"Accept": "application/vnd.github.v3+json"}
     )
-    logger.info("App started")
+    logger.metrics")
+async def metrics():
+    """Prometheus metrics endpoint"""
+    return PlainTextResponse(
+        content=generate_latest().decode('utf-8'),
+        media_type=CONTENT_TYPE_LATEST
+    )
+
+
+@app.get("/info("App started")
     yield
     if http_client:
         await http_client.aclose()
@@ -55,7 +114,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GitHub Gists API",
-    description="Fetch public gists for any GitHub user",
+    desc# Track GitHub API calls
+        GITHUB_API_REQUESTS.labels(status=response.status_code).inc()
+        
+        ription="Fetch public gists for any GitHub user",
     version="1.0.0",
     lifespan=lifespan
 )

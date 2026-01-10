@@ -5,6 +5,10 @@ metadata:
   namespace: production
   labels:
     app: github-gists-api
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
 spec:
   replicas: 3
   strategy:
@@ -19,7 +23,14 @@ spec:
     metadata:
       labels:
         app: github-gists-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
     spec:
+      imagePullSecrets:
+      - name: dockerhub-secret
+      
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -29,12 +40,15 @@ spec:
       
       containers:
       - name: api
-        image: ghcr.io/github-gists-api:latest
+        image: YOUR_DOCKERHUB_USERNAME/github-gists-api:latest
         imagePullPolicy: Always
         
         ports:
         - containerPort: 8080
           name: http
+          protocol: TCP
+        - containerPort: 8080
+          name: metrics
           protocol: TCP
         
         env:

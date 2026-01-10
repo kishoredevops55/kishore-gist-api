@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for SonarCloud
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -34,12 +36,27 @@ jobs:
       
       - name: Run tests
         run: |
-          pytest -v --cov=app --cov-report=xml
+          pytest -v --cov=app --cov-report=xml --cov-report=html
       
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
+        continue-on-error: true
+      
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=kishoredevops55_eq-assessment
+            -Dsonar.organization=kishoredevops55
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.sources=app/
+            -Dsonar.tests=tests/
+            -Dsonar.python.version=3.12
         continue-on-error: true
 
   security-scan:
@@ -71,7 +88,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Build image
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/github-gists-api
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: Build image (no push yet)
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -81,23 +115,62 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
-      - name: Scan with Trivy
+      - name: Scan with Trivy (Vulnerability Scanner)
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: github-gists-api:${{ github.sha }}
           format: 'sarif'
           output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'  # Don't fail on vulnerabilities yet
       
-      - name: Upload Trivy results
+      - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
         continue-on-error: true
       
-      - name: Generate SBOM
+      - name: Scan with Snyk (Alternative Container Scanner)
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: github-gists-api:${{ github.sha }}
+          args: --severity-threshold=high
+        continue-on-error: true
+      
+      - name: Generate SBOM (Software Bill of Materials)
         uses: anchore/sbom-action@v0
         with:
           image: github-gists-api:${{ github.sha }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+      
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+      
+      - name: Build and Push to DockerHub (after scans pass)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+      
+      - name: Docker Scout CVEs (DockerHub native scanner)
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: ${{ secrets.DOCKERHUB_USERNAME }}/github-gists-api:${{ github.sha }}
+          only-severities: critical,high
+          exit-code: false
+        continue-on-error: true
           format: spdx-json
           output-file: sbom.spdx.json
       

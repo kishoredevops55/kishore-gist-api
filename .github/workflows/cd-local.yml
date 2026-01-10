@@ -1,0 +1,82 @@
+name: CD Pipeline (Local Kind Cluster)
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  deploy-to-kind:
+    runs-on: [self-hosted, kishore-poc]  # Target your local runner
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up kubectl
+        run: |
+          # kubectl should already be available via Docker Desktop
+          kubectl version --client
+      
+      - name: Configure Kind cluster context (kind-dev)
+        run: |
+          kubectl config use-context kind-kind-dev
+          kubectl cluster-info
+      
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
+      
+      - name: Load image into Kind cluster (kind-dev)
+        run: |
+          # Load the image from Docker Desktop into Kind
+          kind load docker-image ${{ secrets.DOCKERHUB_USERNAME }}/github-gists-api:${{ github.sha }} --name kind-dev
+        continue-on-error: true
+      
+      - name: Create DockerHub pull secret
+        run: |
+          kubectl create secret docker-registry dockerhub-secret `
+            --docker-server=https://index.docker.io/v1/ `
+            --docker-username=${{ secrets.DOCKERHUB_USERNAME }} `
+            --docker-password=${{ secrets.DOCKERHUB_TOKEN }} `
+            --namespace=production `
+            --dry-run=client -o yaml | kubectl apply -f -
+      
+      - name: Update deployment image
+        run: |
+          # Update the deployment YAML with correct image
+          $deploymentFile = "k8s/deployment.yaml"
+          $content = Get-Content $deploymentFile -Raw
+          $content = $content -replace 'YOUR_DOCKERHUB_USERNAME', '${{ secrets.DOCKERHUB_USERNAME }}'
+          $content = $content -replace ':latest', ':${{ github.sha }}'
+          Set-Content -Path "$deploymentFile.tmp" -Value $content
+      
+      - name: Deploy to Kind cluster
+        run: |
+          kubectl apply -f k8s/deployment.yaml.tmp
+          kubectl apply -f k8s/servicemonitor.yaml
+          kubectl rollout status deployment/github-gists-api -n production --timeout=3m
+      
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n production -l app=github-gists-api
+          kubectl get svc -n production -l app=github-gists-api
+      
+      - name: Port forward and test
+        run: |
+          Start-Job -ScriptBlock {
+            kubectl port-forward -n production svc/github-gists-api 8080:80
+          }
+          Start-Sleep -Seconds 5
+          
+          # Test health endpoint
+          $response = Invoke-RestMethod http://localhost:8080/health
+          Write-Host "Health check: $($response.status)"
+          
+          # Test metrics endpoint
+          $metrics = Invoke-WebRequest http://localhost:8080/metrics
+          Write-Host "Metrics endpoint: Available"
+          
+          Stop-Job -Name *
