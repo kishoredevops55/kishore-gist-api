@@ -27,26 +27,30 @@ jobs:
           if ($clusters -notcontains "${{ env.CLUSTER_NAME }}") {
             Write-Host "Creating kind cluster ${{ env.CLUSTER_NAME }} with ingress support..."
             
-            # Create cluster config with port mappings for ingress
-            @"
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-- role: control-plane
-  kubeadmConfigPatches:
-  - |
-    kind: InitConfiguration
-    nodeRegistration:
-      kubeletExtraArgs:
-        node-labels: "ingress-ready=true"
-  extraPortMappings:
-  - containerPort: 80
-    hostPort: 80
-    protocol: TCP
-  - containerPort: 443
-    hostPort: 443
-    protocol: TCP
-"@ | kind create cluster --name ${{ env.CLUSTER_NAME }} --config -
+            # Create temporary kind config file
+            $kindConfig = @'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+          - role: control-plane
+            kubeadmConfigPatches:
+            - |
+              kind: InitConfiguration
+              nodeRegistration:
+                kubeletExtraArgs:
+                  node-labels: "ingress-ready=true"
+            extraPortMappings:
+            - containerPort: 80
+              hostPort: 80
+              protocol: TCP
+            - containerPort: 443
+              hostPort: 443
+              protocol: TCP
+          '@
+            
+            $kindConfig | Out-File -FilePath kind-config.yaml -Encoding utf8
+            kind create cluster --name ${{ env.CLUSTER_NAME }} --config kind-config.yaml
+            Remove-Item kind-config.yaml
             
             Write-Host "✅ Kind cluster created with ingress port mappings"
           } else {
