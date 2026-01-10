@@ -1,0 +1,105 @@
+# Synthetic Monitoring - Blackbox Exporter (Basic - No CRDs Required)
+# HTTP/HTTPS endpoint monitoring for GitHub Gists API
+# This version works without Prometheus Operator CRDs
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blackbox-exporter-config
+  namespace: monitoring
+data:
+  blackbox.yml: |
+    modules:
+      http_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+          valid_status_codes: [200]
+          method: GET
+          follow_redirects: true
+          fail_if_ssl: false
+          fail_if_not_ssl: false
+          tls_config:
+            insecure_skip_verify: true
+      
+      http_json:
+        prober: http
+        timeout: 5s
+        http:
+          valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+          valid_status_codes: [200]
+          method: GET
+          headers:
+            Accept: application/json
+          fail_if_body_not_matches_regexp:
+            - '"status":\s*"healthy"'
+          tls_config:
+            insecure_skip_verify: true
+      
+      tcp_connect:
+        prober: tcp
+        timeout: 5s
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+  labels:
+    app: blackbox-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blackbox-exporter
+  template:
+    metadata:
+      labels:
+        app: blackbox-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9115"
+    spec:
+      containers:
+      - name: blackbox-exporter
+        image: prom/blackbox-exporter:v0.24.0
+        ports:
+        - containerPort: 9115
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/blackbox_exporter
+        args:
+        - --config.file=/etc/blackbox_exporter/blackbox.yml
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      volumes:
+      - name: config
+        configMap:
+          name: blackbox-exporter-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+  labels:
+    app: blackbox-exporter
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9115"
+spec:
+  selector:
+    app: blackbox-exporter
+  ports:
+  - port: 9115
+    targetPort: 9115
+    name: http
