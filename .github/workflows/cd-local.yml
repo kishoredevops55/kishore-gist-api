@@ -110,34 +110,20 @@ jobs:
           }
 
       - name: Test and display access URLs
-        shell: cmd
         run: |
-          echo.
-          echo ========================================
-          echo Testing API via Port-Forward
-          echo ========================================
-          
-          start /b kubectl port-forward -n istio-system svc/istio-ingressgateway 9443:443
-          timeout /t 5 /nobreak >nul
-          
-          echo Testing HTTPS health endpoint...
-          curl.exe -sk -H "Host: gists.kishore.local" https://localhost:9443/health
-          echo.
-          
-          echo Testing HTTPS gists endpoint...
-          curl.exe -sk -H "Host: gists.kishore.local" https://localhost:9443/octocat
-          echo.
-          
-          echo.
-          echo ========================================
-          echo DEPLOYMENT SUCCESSFUL!
-          echo ========================================
-          echo.
-          echo HTTPS Access - Run port-forward first:
-          echo   kubectl port-forward -n istio-system svc/istio-ingressgateway 443:443
-          echo.
-          echo Then access (with hosts file: 127.0.0.1 gists.kishore.local):
-          echo   https://gists.kishore.local/health
-          echo   https://gists.kishore.local/octocat
-          echo   https://gists.local/octocat
-          echo.
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "DEPLOYMENT SUCCESSFUL!"
+          Write-Host "========================================"
+          Write-Host ""
+          Write-Host "HTTPS Access - Run port-forward first:"
+          Write-Host "  kubectl port-forward -n istio-system svc/istio-ingressgateway 443:443"
+          Write-Host ""
+          Write-Host "Then access (with hosts file: 127.0.0.1 gists.kishore.local):"
+          Write-Host "  https://gists.kishore.local/health"
+          Write-Host "  https://gists.kishore.local/octocat"
+          Write-Host "  https://gists.local/octocat"
+          Write-Host ""
+          Write-Host "Or use curl:"
+          Write-Host "  curl.exe -k https://gists.kishore.local/health"
+          Write-Host ""
