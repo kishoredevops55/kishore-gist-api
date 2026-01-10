@@ -1,6 +1,6 @@
 # Istio Gateway and VirtualService for GitHub Gists API
 # Provides: Load Balancing, Traffic Management, mTLS, Observability
-# Access via: https://gists.kishore.local
+# Access via: https://gists.kishore.local or https://gists.local
 
 ---
 apiVersion: networking.istio.io/v1beta1
@@ -12,23 +12,29 @@ spec:
   selector:
     istio: ingressgateway
   servers:
+  # HTTP to HTTPS redirect
   - port:
       number: 80
       name: http
       protocol: HTTP
     hosts:
     - "gists.kishore.local"
+    - "gists.local"
+    - "*"
     tls:
-      httpsRedirect: true  # Redirect HTTP to HTTPS
+      httpsRedirect: true
+  # HTTPS with TLS termination
   - port:
       number: 443
       name: https
       protocol: HTTPS
     hosts:
     - "gists.kishore.local"
+    - "gists.local"
+    - "*"
     tls:
       mode: SIMPLE
-      credentialName: gists-tls-secret  # TLS secret name
+      credentialName: gists-tls-secret
 
 ---
 apiVersion: networking.istio.io/v1beta1
@@ -39,6 +45,8 @@ metadata:
 spec:
   hosts:
   - "gists.kishore.local"
+  - "gists.local"
+  - "*"
   gateways:
   - gists-gateway
   http:

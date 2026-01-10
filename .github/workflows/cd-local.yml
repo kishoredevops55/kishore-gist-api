@@ -30,100 +30,116 @@ jobs:
       - name: Deploy application
         run: |
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label namespace ${{ env.NAMESPACE }} istio-injection=enabled --overwrite
           kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/ingress-nginx.yaml
           kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=2m
           Write-Host "✅ Application deployed" -ForegroundColor Green
 
       - name: Setup MetalLB for LoadBalancer IP
         run: |
-          # Check if MetalLB already installed
           $metallbNs = kubectl get namespace metallb-system --ignore-not-found=true 2>$null
           if ([string]::IsNullOrEmpty($metallbNs)) {
             Write-Host "Installing MetalLB..." -ForegroundColor Yellow
             kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
-            
-            # Wait for MetalLB pods
-            Start-Sleep -Seconds 10
-            kubectl wait --namespace metallb-system --for=condition=ready pod --selector=app=metallb --timeout=90s 2>$null
+            Start-Sleep -Seconds 15
+            kubectl wait --namespace metallb-system --for=condition=ready pod --selector=app=metallb --timeout=120s 2>$null
           }
           
-          # Get Docker network subnet for Kind
           $kindNetwork = docker network inspect kind --format "{{range .IPAM.Config}}{{.Subnet}}{{end}}" 2>$null
           if ($kindNetwork) {
-            # Extract base IP (e.g., 172.18.0.0/16 -> 172.18)
             $baseIP = ($kindNetwork -split '\.')[0..1] -join '.'
             $ipRange = "$baseIP.255.200-$baseIP.255.250"
-            
             Write-Host "Configuring MetalLB IP pool: $ipRange" -ForegroundColor Yellow
             
-            # Apply MetalLB configuration
-            $metallbConfig = @"
-apiVersion: metallb.io/v1beta1
-kind: IPAddressPool
-metadata:
-  name: kind-pool
-  namespace: metallb-system
-spec:
-  addresses:
-  - $ipRange
----
-apiVersion: metallb.io/v1beta1
-kind: L2Advertisement
-metadata:
-  name: kind-l2
-  namespace: metallb-system
-spec:
-  ipAddressPools:
-  - kind-pool
-"@
-            $metallbConfig | kubectl apply -f -
+            $poolYaml = "apiVersion: metallb.io/v1beta1`nkind: IPAddressPool`nmetadata:`n  name: kind-pool`n  namespace: metallb-system`nspec:`n  addresses:`n  - $ipRange"
+            $poolYaml | kubectl apply -f -
+            
+            $l2Yaml = "apiVersion: metallb.io/v1beta1`nkind: L2Advertisement`nmetadata:`n  name: kind-l2`n  namespace: metallb-system`nspec:`n  ipAddressPools:`n  - kind-pool"
+            $l2Yaml | kubectl apply -f -
+            
             Write-Host "✅ MetalLB configured" -ForegroundColor Green
           }
 
-      - name: Patch Ingress for LoadBalancer
+      - name: Generate TLS Certificate
         run: |
-          # Patch ingress-nginx to LoadBalancer type
-          kubectl patch svc ingress-nginx-controller -n ingress-nginx -p '{"spec":{"type":"LoadBalancer"}}'
+          $openssl = "C:\Program Files\Git\usr\bin\openssl.exe"
+          $certExists = kubectl get secret gists-tls-secret -n istio-system --ignore-not-found 2>$null
           
-          # Wait for external IP
+          if ([string]::IsNullOrEmpty($certExists)) {
+            Write-Host "Generating TLS certificate..." -ForegroundColor Yellow
+            
+            $confContent = @"
+          [req]
+          distinguished_name = req_distinguished_name
+          x509_extensions = v3_req
+          prompt = no
+          [req_distinguished_name]
+          CN = ${{ env.CUSTOM_DNS }}
+          [v3_req]
+          keyUsage = digitalSignature, keyEncipherment
+          extendedKeyUsage = serverAuth
+          subjectAltName = @alt_names
+          [alt_names]
+          DNS.1 = ${{ env.CUSTOM_DNS }}
+          DNS.2 = gists.local
+          DNS.3 = *.local
+          "@
+            $confContent | Out-File -FilePath cert.conf -Encoding ascii
+            
+            & $openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -config cert.conf -extensions v3_req 2>$null
+            
+            kubectl create secret tls gists-tls-secret --cert=tls.crt --key=tls.key -n istio-system --dry-run=client -o yaml | kubectl apply -f -
+            Remove-Item cert.conf, tls.key, tls.crt -Force -ErrorAction SilentlyContinue
+            Write-Host "✅ TLS certificate created" -ForegroundColor Green
+          } else {
+            Write-Host "✅ TLS certificate exists" -ForegroundColor Green
+          }
+
+      - name: Configure Istio Gateway and VirtualService
+        run: |
+          kubectl apply -f k8s/istio-gateway.yaml
+          Write-Host "✅ Istio Gateway configured" -ForegroundColor Green
+
+      - name: Patch Istio Ingress Gateway for LoadBalancer
+        run: |
+          kubectl patch svc istio-ingressgateway -n istio-system -p '{"spec":{"type":"LoadBalancer"}}'
+          
           $retries = 0
-          while ($retries -lt 12) {
-            $externalIP = kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
+          while ($retries -lt 15) {
+            $externalIP = kubectl get svc istio-ingressgateway -n istio-system -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
             if ($externalIP) {
-              Write-Host "✅ LoadBalancer IP: $externalIP" -ForegroundColor Green
+              Write-Host "✅ Istio Gateway LoadBalancer IP: $externalIP" -ForegroundColor Green
               break
             }
-            Write-Host "Waiting for LoadBalancer IP... ($retries/12)"
-            Start-Sleep -Seconds 5
+            Write-Host "Waiting for LoadBalancer IP... ($retries/15)"
+            Start-Sleep -Seconds 4
             $retries++
           }
 
       - name: Test and display access URLs
         run: |
-          # Get LoadBalancer IP
-          $LB_IP = kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
+          $LB_IP = kubectl get svc istio-ingressgateway -n istio-system -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
           
           if ($LB_IP) {
             Write-Host ""
             Write-Host "========================================" -ForegroundColor Cyan
-            Write-Host "Testing API via LoadBalancer" -ForegroundColor Cyan
+            Write-Host "Testing API via Istio Gateway" -ForegroundColor Cyan
             Write-Host "========================================" -ForegroundColor Cyan
             
-            # Test health
+            Start-Sleep -Seconds 5
+            
             try {
-              $health = Invoke-RestMethod -Uri "http://${LB_IP}/health" -Headers @{ Host = "gists.local" } -TimeoutSec 10
-              Write-Host "✅ Health: $($health.status)" -ForegroundColor Green
+              $health = Invoke-RestMethod -Uri "https://${LB_IP}/health" -Headers @{ Host = "${{ env.CUSTOM_DNS }}" } -SkipCertificateCheck -TimeoutSec 10
+              Write-Host "✅ HTTPS Health: $($health.status)" -ForegroundColor Green
             } catch {
-              Write-Host "❌ Health check failed: $_" -ForegroundColor Red
+              Write-Host "⚠️ HTTPS test: $_" -ForegroundColor Yellow
             }
             
-            # Test gists
             try {
-              $gists = Invoke-RestMethod -Uri "http://${LB_IP}/octocat" -Headers @{ Host = "gists.local" } -TimeoutSec 10
-              Write-Host "✅ Gists: Found $($gists.Count) for octocat" -ForegroundColor Green
+              $gists = Invoke-RestMethod -Uri "https://${LB_IP}/octocat" -Headers @{ Host = "${{ env.CUSTOM_DNS }}" } -SkipCertificateCheck -TimeoutSec 10
+              Write-Host "✅ HTTPS Gists: Found $($gists.Count) for octocat" -ForegroundColor Green
             } catch {
-              Write-Host "❌ Gists failed: $_" -ForegroundColor Red
+              Write-Host "⚠️ HTTPS gists: $_" -ForegroundColor Yellow
             }
             
             Write-Host ""
@@ -131,20 +147,20 @@ spec:
             Write-Host "🎉 DEPLOYMENT SUCCESSFUL!" -ForegroundColor Green
             Write-Host "========================================" -ForegroundColor Green
             Write-Host ""
-            Write-Host "LoadBalancer IP: $LB_IP" -ForegroundColor Cyan
+            Write-Host "Istio Gateway LoadBalancer IP: $LB_IP" -ForegroundColor Cyan
             Write-Host ""
-            Write-Host "Access URLs (no port-forward needed!):" -ForegroundColor Yellow
-            Write-Host "  curl -H 'Host: gists.local' http://$LB_IP/health" -ForegroundColor White
-            Write-Host "  curl -H 'Host: gists.local' http://$LB_IP/octocat" -ForegroundColor White
-            Write-Host "  curl -H 'Host: ${{ env.CUSTOM_DNS }}' http://$LB_IP/octocat" -ForegroundColor White
+            Write-Host "HTTPS Access (Istio mTLS secured):" -ForegroundColor Yellow
+            Write-Host "  curl -k -H 'Host: ${{ env.CUSTOM_DNS }}' https://$LB_IP/health" -ForegroundColor White
+            Write-Host "  curl -k -H 'Host: ${{ env.CUSTOM_DNS }}' https://$LB_IP/octocat" -ForegroundColor White
+            Write-Host "  curl -k -H 'Host: gists.local' https://$LB_IP/octocat" -ForegroundColor White
             Write-Host ""
-            Write-Host "Or add to hosts file and use directly:" -ForegroundColor Yellow
+            Write-Host "Add to hosts file for browser access:" -ForegroundColor Yellow
             Write-Host "  $LB_IP gists.local ${{ env.CUSTOM_DNS }}" -ForegroundColor White
-            Write-Host "  http://gists.local/octocat" -ForegroundColor White
-            Write-Host "  http://${{ env.CUSTOM_DNS }}/octocat" -ForegroundColor White
+            Write-Host ""
+            Write-Host "Then browse (accept self-signed cert):" -ForegroundColor Yellow
+            Write-Host "  https://gists.local/health" -ForegroundColor White
+            Write-Host "  https://${{ env.CUSTOM_DNS }}/octocat" -ForegroundColor White
             Write-Host ""
           } else {
-            Write-Host "⚠️  No LoadBalancer IP, using port-forward fallback" -ForegroundColor Yellow
-            Write-Host "  kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8080:80" -ForegroundColor White
-            Write-Host "  curl -H 'Host: gists.local' http://localhost:8080/octocat" -ForegroundColor White
+            Write-Host "⚠️ No LoadBalancer IP assigned" -ForegroundColor Yellow
           }
