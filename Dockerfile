@@ -30,8 +30,14 @@ LABEL maintainer="Equal Experts DevOps Team" \
       description="GitHub Gists API - FastAPI Application" \
       version="1.0.0"
 
-# Security: Create non-root user
-RUN groupadd -r -g 1000 appuser && \
+# Security: Update system packages to fix CVEs and create non-root user
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+    gnupg2 \
+    libpam-runtime \
+    && rm -rf /var/lib/apt/lists/* && \
+    groupadd -r -g 1000 appuser && \
     useradd -r -u 1000 -g appuser appuser
 
 # Set working directory
