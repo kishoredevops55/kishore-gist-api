@@ -248,55 +248,55 @@ jobs:
           Write-Host "[OK] Grafana dashboards imported" -ForegroundColor Green
 
       - name: Configure Grafana Istio Gateway
+        shell: cmd
         run: |
-          $grafanaGateway = @"
-apiVersion: networking.istio.io/v1beta1
-kind: Gateway
-metadata:
-  name: grafana-gateway
-  namespace: monitoring
-spec:
-  selector:
-    istio: ingressgateway
-  servers:
-  - port:
-      number: 80
-      name: http
-      protocol: HTTP
-    hosts:
-    - "kishoregrafana.local"
-  - port:
-      number: 443
-      name: https
-      protocol: HTTPS
-    tls:
-      mode: SIMPLE
-      credentialName: grafana-tls-secret
-    hosts:
-    - "kishoregrafana.local"
----
-apiVersion: networking.istio.io/v1beta1
-kind: VirtualService
-metadata:
-  name: grafana-vs
-  namespace: monitoring
-spec:
-  hosts:
-  - "kishoregrafana.local"
-  gateways:
-  - grafana-gateway
-  http:
-  - match:
-    - uri:
-        prefix: /
-    route:
-    - destination:
-        host: kube-prometheus-stack-grafana.monitoring.svc.cluster.local
-        port:
-          number: 80
-"@
-          $grafanaGateway | kubectl apply -f -
-          Write-Host "[OK] Grafana Istio Gateway configured" -ForegroundColor Green
+          echo apiVersion: networking.istio.io/v1beta1 > grafana-gateway.yaml
+          echo kind: Gateway >> grafana-gateway.yaml
+          echo metadata: >> grafana-gateway.yaml
+          echo   name: grafana-gateway >> grafana-gateway.yaml
+          echo   namespace: monitoring >> grafana-gateway.yaml
+          echo spec: >> grafana-gateway.yaml
+          echo   selector: >> grafana-gateway.yaml
+          echo     istio: ingressgateway >> grafana-gateway.yaml
+          echo   servers: >> grafana-gateway.yaml
+          echo   - port: >> grafana-gateway.yaml
+          echo       number: 80 >> grafana-gateway.yaml
+          echo       name: http >> grafana-gateway.yaml
+          echo       protocol: HTTP >> grafana-gateway.yaml
+          echo     hosts: >> grafana-gateway.yaml
+          echo     - "kishoregrafana.local" >> grafana-gateway.yaml
+          echo   - port: >> grafana-gateway.yaml
+          echo       number: 443 >> grafana-gateway.yaml
+          echo       name: https >> grafana-gateway.yaml
+          echo       protocol: HTTPS >> grafana-gateway.yaml
+          echo     tls: >> grafana-gateway.yaml
+          echo       mode: SIMPLE >> grafana-gateway.yaml
+          echo       credentialName: grafana-tls-secret >> grafana-gateway.yaml
+          echo     hosts: >> grafana-gateway.yaml
+          echo     - "kishoregrafana.local" >> grafana-gateway.yaml
+          echo --- >> grafana-gateway.yaml
+          echo apiVersion: networking.istio.io/v1beta1 >> grafana-gateway.yaml
+          echo kind: VirtualService >> grafana-gateway.yaml
+          echo metadata: >> grafana-gateway.yaml
+          echo   name: grafana-vs >> grafana-gateway.yaml
+          echo   namespace: monitoring >> grafana-gateway.yaml
+          echo spec: >> grafana-gateway.yaml
+          echo   hosts: >> grafana-gateway.yaml
+          echo   - "kishoregrafana.local" >> grafana-gateway.yaml
+          echo   gateways: >> grafana-gateway.yaml
+          echo   - grafana-gateway >> grafana-gateway.yaml
+          echo   http: >> grafana-gateway.yaml
+          echo   - match: >> grafana-gateway.yaml
+          echo     - uri: >> grafana-gateway.yaml
+          echo         prefix: / >> grafana-gateway.yaml
+          echo     route: >> grafana-gateway.yaml
+          echo     - destination: >> grafana-gateway.yaml
+          echo         host: kube-prometheus-stack-grafana.monitoring.svc.cluster.local >> grafana-gateway.yaml
+          echo         port: >> grafana-gateway.yaml
+          echo           number: 80 >> grafana-gateway.yaml
+          kubectl apply -f grafana-gateway.yaml
+          del grafana-gateway.yaml
+          echo [OK] Grafana Istio Gateway configured
 
       - name: Display Monitoring Access Info
         run: |
