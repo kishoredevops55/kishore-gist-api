@@ -12,7 +12,7 @@ spec:
   selector:
     istio: ingressgateway
   servers:
-  # HTTP to HTTPS redirect
+  # HTTP access (no redirect for local dev)
   - port:
       number: 80
       name: http
@@ -20,8 +20,6 @@ spec:
     hosts:
     - "gists.kishore.local"
     - "gists.local"
-    tls:
-      httpsRedirect: true
   # HTTPS with TLS termination
   - port:
       number: 443

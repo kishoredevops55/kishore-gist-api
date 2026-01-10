@@ -91,7 +91,8 @@ jobs:
 
       - name: Patch Istio Ingress Gateway for LoadBalancer
         run: |
-          kubectl patch svc istio-ingressgateway -n istio-system -p '{"spec":{"type":"LoadBalancer"}}'
+          $patchJson = '{"spec":{"type":"LoadBalancer"}}'
+          kubectl patch svc istio-ingressgateway -n istio-system -p $patchJson --type=merge
           
           $retries = 0
           while ($retries -lt 15) {
@@ -107,49 +108,43 @@ jobs:
 
       - name: Test and display access URLs
         run: |
-          $LB_IP = kubectl get svc istio-ingressgateway -n istio-system -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
+          Write-Host ""
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "Testing API via Port-Forward" -ForegroundColor Cyan
+          Write-Host "========================================" -ForegroundColor Cyan
           
-          if ($LB_IP) {
-            Write-Host ""
-            Write-Host "========================================" -ForegroundColor Cyan
-            Write-Host "Testing API via Istio Gateway" -ForegroundColor Cyan
-            Write-Host "========================================" -ForegroundColor Cyan
-            
-            Start-Sleep -Seconds 5
-            
-            try {
-              $health = Invoke-RestMethod -Uri "https://${LB_IP}/health" -Headers @{ Host = "${{ env.CUSTOM_DNS }}" } -SkipCertificateCheck -TimeoutSec 10
-              Write-Host "✅ HTTPS Health: $($health.status)" -ForegroundColor Green
-            } catch {
-              Write-Host "⚠️ HTTPS test: $_" -ForegroundColor Yellow
-            }
-            
-            try {
-              $gists = Invoke-RestMethod -Uri "https://${LB_IP}/octocat" -Headers @{ Host = "${{ env.CUSTOM_DNS }}" } -SkipCertificateCheck -TimeoutSec 10
-              Write-Host "✅ HTTPS Gists: Found $($gists.Count) for octocat" -ForegroundColor Green
-            } catch {
-              Write-Host "⚠️ HTTPS gists: $_" -ForegroundColor Yellow
-            }
-            
-            Write-Host ""
-            Write-Host "========================================" -ForegroundColor Green
-            Write-Host "🎉 DEPLOYMENT SUCCESSFUL!" -ForegroundColor Green
-            Write-Host "========================================" -ForegroundColor Green
-            Write-Host ""
-            Write-Host "Istio Gateway LoadBalancer IP: $LB_IP" -ForegroundColor Cyan
-            Write-Host ""
-            Write-Host "HTTPS Access (Istio mTLS secured):" -ForegroundColor Yellow
-            Write-Host "  curl -k -H 'Host: ${{ env.CUSTOM_DNS }}' https://$LB_IP/health" -ForegroundColor White
-            Write-Host "  curl -k -H 'Host: ${{ env.CUSTOM_DNS }}' https://$LB_IP/octocat" -ForegroundColor White
-            Write-Host "  curl -k -H 'Host: gists.local' https://$LB_IP/octocat" -ForegroundColor White
-            Write-Host ""
-            Write-Host "Add to hosts file for browser access:" -ForegroundColor Yellow
-            Write-Host "  $LB_IP gists.local ${{ env.CUSTOM_DNS }}" -ForegroundColor White
-            Write-Host ""
-            Write-Host "Then browse (accept self-signed cert):" -ForegroundColor Yellow
-            Write-Host "  https://gists.local/health" -ForegroundColor White
-            Write-Host "  https://${{ env.CUSTOM_DNS }}/octocat" -ForegroundColor White
-            Write-Host ""
-          } else {
-            Write-Host "⚠️ No LoadBalancer IP assigned" -ForegroundColor Yellow
+          # Start port-forward in background
+          $job = Start-Job -ScriptBlock { kubectl port-forward -n istio-system svc/istio-ingressgateway 9443:443 2>&1 }
+          Start-Sleep -Seconds 5
+          
+          # Test HTTPS
+          try {
+            $health = curl.exe -sk -H "Host: ${{ env.CUSTOM_DNS }}" https://localhost:9443/health | ConvertFrom-Json
+            Write-Host "✅ HTTPS Health: $($health.status)" -ForegroundColor Green
+          } catch {
+            Write-Host "⚠️ Health check: $_" -ForegroundColor Yellow
           }
+          
+          try {
+            $gists = curl.exe -sk -H "Host: ${{ env.CUSTOM_DNS }}" https://localhost:9443/octocat | ConvertFrom-Json
+            Write-Host "✅ HTTPS Gists: Found $($gists.Count) for octocat" -ForegroundColor Green
+          } catch {
+            Write-Host "⚠️ Gists test: $_" -ForegroundColor Yellow
+          }
+          
+          Stop-Job $job -ErrorAction SilentlyContinue
+          Remove-Job $job -Force -ErrorAction SilentlyContinue
+          
+          Write-Host ""
+          Write-Host "========================================" -ForegroundColor Green
+          Write-Host "🎉 DEPLOYMENT SUCCESSFUL!" -ForegroundColor Green
+          Write-Host "========================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "HTTPS Access - Run port-forward first:" -ForegroundColor Yellow
+          Write-Host "  kubectl port-forward -n istio-system svc/istio-ingressgateway 443:443" -ForegroundColor White
+          Write-Host ""
+          Write-Host "Then access (with hosts file: 127.0.0.1 ${{ env.CUSTOM_DNS }}):" -ForegroundColor Yellow
+          Write-Host "  https://${{ env.CUSTOM_DNS }}/health" -ForegroundColor White
+          Write-Host "  https://${{ env.CUSTOM_DNS }}/octocat" -ForegroundColor White
+          Write-Host "  https://gists.local/octocat" -ForegroundColor White
+          Write-Host ""
