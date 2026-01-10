@@ -1,0 +1,129 @@
+# Istio Gateway and VirtualService for GitHub Gists API
+# Provides: Load Balancing, Traffic Management, mTLS, Observability
+# Access via: https://gists.kishore.local
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: gists-gateway
+  namespace: production
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "gists.kishore.local"
+    tls:
+      httpsRedirect: true  # Redirect HTTP to HTTPS
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - "gists.kishore.local"
+    tls:
+      mode: SIMPLE
+      credentialName: gists-tls-secret  # TLS secret name
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: gists-virtualservice
+  namespace: production
+spec:
+  hosts:
+  - "gists.kishore.local"
+  gateways:
+  - gists-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /health
+    - uri:
+        prefix: /metrics
+    route:
+    - destination:
+        host: github-gists-api.production.svc.cluster.local
+        port:
+          number: 80
+    retries:
+      attempts: 3
+      perTryTimeout: 2s
+      retryOn: connect-failure,refused-stream,unavailable,cancelled,retriable-4xx,reset
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: github-gists-api.production.svc.cluster.local
+        port:
+          number: 80
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: gists-destination-rule
+  namespace: production
+spec:
+  host: github-gists-api.production.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        h2UpgradePolicy: UPGRADE
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+
+---
+# PeerAuthentication for mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: gists-mtls
+  namespace: production
+spec:
+  selector:
+    matchLabels:
+      app: github-gists-api
+  mtls:
+    mode: STRICT
+
+---
+# AuthorizationPolicy for API access control
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: gists-authz
+  namespace: production
+spec:
+  selector:
+    matchLabels:
+      app: github-gists-api
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["istio-system", "production"]
+  - to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/health", "/metrics", "/*"]

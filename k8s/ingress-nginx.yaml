@@ -1,6 +1,6 @@
 # Production-grade ingress for local development with Kind
 # Uses nginx ingress controller for load balancing
-# Access via: http://gists.local/<username>
+# Access via: http://gists.local/<username> or http://gists.kishore.local/<username>
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -20,6 +20,16 @@ spec:
   ingressClassName: nginx
   rules:
   - host: gists.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: github-gists-api
+            port:
+              number: 80
+  - host: gists.kishore.local
     http:
       paths:
       - path: /
