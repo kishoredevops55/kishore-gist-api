@@ -118,6 +118,7 @@ jobs:
           kubectl get ingress -n ${{ env.NAMESPACE }}
       
       - name: Configure local DNS (Windows hosts file)
+        continue-on-error: true
         run: |
           $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
           $dnsEntry = "127.0.0.1 gists.local"
@@ -126,11 +127,14 @@ jobs:
           $existingEntry = Get-Content $hostsFile | Select-String -Pattern "gists.local"
           
           if (-not $existingEntry) {
-            Write-Host "Adding DNS entry to hosts file..."
-            Add-Content -Path $hostsFile -Value "`n$dnsEntry" -Force
-            Write-Host "✅ Added: $dnsEntry"
+            Write-Host "⚠️  DNS entry not found in hosts file" -ForegroundColor Yellow
+            Write-Host "Please run as Administrator:" -ForegroundColor Yellow
+            Write-Host "  Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value '127.0.0.1 gists.local'" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "Or manually add this line to C:\Windows\System32\drivers\etc\hosts:" -ForegroundColor Yellow
+            Write-Host "  127.0.0.1 gists.local" -ForegroundColor Cyan
           } else {
-            Write-Host "✅ DNS entry already exists: $existingEntry"
+            Write-Host "✅ DNS entry already exists: $existingEntry" -ForegroundColor Green
           }
       
       - name: Wait for ingress to be ready
