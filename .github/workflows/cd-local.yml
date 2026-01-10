@@ -158,20 +158,24 @@ jobs:
             --timeout=60s
           
           Write-Host "✅ Application pods are ready" -ForegroundColor Green
-          Write-Host ""
           
-          # Additional wait for ingress routing to stabilize
-          Write-Host "Waiting for ingress routing to stabilize..."
-          Start-Sleep -Seconds 15
+                    # Setup persistent port-forward for Ingress (Robust method for Windows)
+          Write-Host "Setting up port-forward to ingress controller..." -ForegroundColor Yellow
+          $ingressPod = $(kubectl get pod -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath="{.items[0].metadata.name}")
+          
+          # Start background job for port forward (80->80)
+          Start-Job -ScriptBlock {
+            param($podName)
+            kubectl port-forward -n ingress-nginx pod/$podName 80:80
+          } -ArgumentList $ingressPod
+          
+          Write-Host "Waiting for port-forward to accept connections..."
+          Start-Sleep -Seconds 5
           
           # Show ingress details
           Write-Host ""
           Write-Host "Ingress details:" -ForegroundColor Cyan
           kubectl describe ingress github-gists-api -n ${{ env.NAMESPACE }}
-          
-          Write-Host ""
-          Write-Host "Ingress controller service:" -ForegroundColor Cyan
-          kubectl get svc -n ingress-nginx
       
       - name: Test API via Ingress (Production-grade)
         run: |
