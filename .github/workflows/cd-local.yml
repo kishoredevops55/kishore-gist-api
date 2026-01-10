@@ -61,39 +61,28 @@ jobs:
           }
 
       - name: Generate TLS Certificate
+        shell: cmd
         run: |
-          $openssl = "C:\Program Files\Git\usr\bin\openssl.exe"
-          $certExists = kubectl get secret gists-tls-secret -n istio-system --ignore-not-found 2>$null
-          
-          if ([string]::IsNullOrEmpty($certExists)) {
-            Write-Host "Generating TLS certificate..." -ForegroundColor Yellow
-            
-            $confContent = @"
-          [req]
-          distinguished_name = req_distinguished_name
-          x509_extensions = v3_req
-          prompt = no
-          [req_distinguished_name]
-          CN = ${{ env.CUSTOM_DNS }}
-          [v3_req]
-          keyUsage = digitalSignature, keyEncipherment
-          extendedKeyUsage = serverAuth
-          subjectAltName = @alt_names
-          [alt_names]
-          DNS.1 = ${{ env.CUSTOM_DNS }}
-          DNS.2 = gists.local
-          DNS.3 = *.local
-          "@
-            $confContent | Out-File -FilePath cert.conf -Encoding ascii
-            
-            & $openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -config cert.conf -extensions v3_req 2>$null
-            
-            kubectl create secret tls gists-tls-secret --cert=tls.crt --key=tls.key -n istio-system --dry-run=client -o yaml | kubectl apply -f -
-            Remove-Item cert.conf, tls.key, tls.crt -Force -ErrorAction SilentlyContinue
-            Write-Host "✅ TLS certificate created" -ForegroundColor Green
-          } else {
-            Write-Host "✅ TLS certificate exists" -ForegroundColor Green
-          }
+          kubectl get secret gists-tls-secret -n istio-system >nul 2>&1 && (echo TLS certificate exists && exit /b 0)
+          echo Generating TLS certificate...
+          echo [req] > cert.conf
+          echo distinguished_name = req_distinguished_name >> cert.conf
+          echo x509_extensions = v3_req >> cert.conf
+          echo prompt = no >> cert.conf
+          echo [req_distinguished_name] >> cert.conf
+          echo CN = gists.kishore.local >> cert.conf
+          echo [v3_req] >> cert.conf
+          echo keyUsage = digitalSignature, keyEncipherment >> cert.conf
+          echo extendedKeyUsage = serverAuth >> cert.conf
+          echo subjectAltName = @alt_names >> cert.conf
+          echo [alt_names] >> cert.conf
+          echo DNS.1 = gists.kishore.local >> cert.conf
+          echo DNS.2 = gists.local >> cert.conf
+          echo DNS.3 = *.local >> cert.conf
+          "C:\Program Files\Git\usr\bin\openssl.exe" req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -config cert.conf -extensions v3_req 2>nul
+          kubectl create secret tls gists-tls-secret --cert=tls.crt --key=tls.key -n istio-system --dry-run=client -o yaml | kubectl apply -f -
+          del cert.conf tls.key tls.crt 2>nul
+          echo TLS certificate created
 
       - name: Configure Istio Gateway and VirtualService
         run: |
