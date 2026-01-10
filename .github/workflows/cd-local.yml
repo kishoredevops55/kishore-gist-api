@@ -144,65 +144,66 @@ jobs:
           Write-Host "✅ Istio sidecar injection enabled for ${{ env.NAMESPACE }}" -ForegroundColor Green
       
       - name: Generate TLS Certificate for HTTPS
+        continue-on-error: true
         run: |
           Write-Host "Generating self-signed TLS certificate for ${{ env.CUSTOM_DNS }}..." -ForegroundColor Yellow
           
           # Check if secret already exists
           $tlsSecret = kubectl get secret gists-tls-secret -n istio-system --ignore-not-found=true
           if ([string]::IsNullOrEmpty($tlsSecret)) {
-            # Use PowerShell to generate self-signed certificate (no OpenSSL needed)
-            $cert = New-SelfSignedCertificate `
-              -DnsName "${{ env.CUSTOM_DNS }}", "gists.local", "localhost" `
-              -CertStoreLocation "Cert:\CurrentUser\My" `
-              -KeyAlgorithm RSA `
-              -KeyLength 2048 `
-              -NotAfter (Get-Date).AddYears(1) `
-              -FriendlyName "Gists API TLS Certificate"
+            # Use OpenSSL from Git installation (Git for Windows includes OpenSSL)
+            $gitPath = "C:\Program Files\Git\usr\bin"
+            $opensslPath = "$gitPath\openssl.exe"
             
-            # Export certificate to PEM format
-            $certPath = "tls.crt"
-            $keyPath = "tls.key"
-            $pfxPath = "tls.pfx"
-            $password = ConvertTo-SecureString -String "temppass" -Force -AsPlainText
-            
-            # Export to PFX first
-            Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $password | Out-Null
-            
-            # Use certutil to convert PFX to PEM (available on Windows)
-            # Extract certificate
-            certutil -encode (Get-Item $cert.PSPath).RawData $certPath | Out-Null
-            
-            # For the key, we need a different approach - create base64 encoded secret directly
-            # Export certificate as base64
-            $certBase64 = [Convert]::ToBase64String($cert.RawData)
-            
-            # Get the private key
-            $rsaKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
-            $keyBytes = $rsaKey.ExportRSAPrivateKey()
-            $keyBase64 = [Convert]::ToBase64String($keyBytes)
-            
-            # Create PEM formatted files
-            $certPem = "-----BEGIN CERTIFICATE-----`n"
-            $certPem += ($certBase64 -replace "(.{64})", "`$1`n")
-            $certPem += "`n-----END CERTIFICATE-----"
-            $certPem | Out-File -FilePath $certPath -Encoding ascii -NoNewline
-            
-            $keyPem = "-----BEGIN RSA PRIVATE KEY-----`n"
-            $keyPem += ($keyBase64 -replace "(.{64})", "`$1`n")
-            $keyPem += "`n-----END RSA PRIVATE KEY-----"
-            $keyPem | Out-File -FilePath $keyPath -Encoding ascii -NoNewline
-            
-            # Create TLS secret in istio-system namespace
-            kubectl create secret tls gists-tls-secret `
-              --cert=$certPath `
-              --key=$keyPath `
-              -n istio-system
-            
-            # Cleanup
-            Remove-Item $cert.PSPath -ErrorAction SilentlyContinue
-            Remove-Item $certPath, $keyPath, $pfxPath -ErrorAction SilentlyContinue
-            
-            Write-Host "✅ TLS certificate created for ${{ env.CUSTOM_DNS }}" -ForegroundColor Green
+            if (Test-Path $opensslPath) {
+              Write-Host "Using OpenSSL from Git installation..."
+              
+              # Create OpenSSL config
+              $opensslConf = @"
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+prompt = no
+[req_distinguished_name]
+CN = ${{ env.CUSTOM_DNS }}
+O = Kishore DevOps
+[v3_req]
+keyUsage = keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+[alt_names]
+DNS.1 = ${{ env.CUSTOM_DNS }}
+DNS.2 = gists.local
+DNS.3 = localhost
+"@
+              $opensslConf | Out-File -FilePath openssl.cnf -Encoding ascii
+              
+              # Generate certificate and key
+              & $opensslPath req -x509 -nodes -days 365 -newkey rsa:2048 `
+                -keyout tls.key `
+                -out tls.crt `
+                -config openssl.cnf `
+                -extensions v3_req
+              
+              if ((Test-Path tls.crt) -and (Test-Path tls.key)) {
+                # Create TLS secret
+                kubectl create secret tls gists-tls-secret `
+                  --cert=tls.crt `
+                  --key=tls.key `
+                  -n istio-system
+                
+                Write-Host "✅ TLS certificate created for ${{ env.CUSTOM_DNS }}" -ForegroundColor Green
+              } else {
+                Write-Host "⚠️  Certificate generation failed, HTTPS may not work" -ForegroundColor Yellow
+              }
+              
+              # Cleanup
+              Remove-Item tls.key, tls.crt, openssl.cnf -ErrorAction SilentlyContinue
+            } else {
+              Write-Host "⚠️  OpenSSL not found, skipping TLS certificate generation" -ForegroundColor Yellow
+              Write-Host "   HTTPS via Istio will not be available" -ForegroundColor Yellow
+              Write-Host "   HTTP via NGINX Ingress will still work" -ForegroundColor Yellow
+            }
           } else {
             Write-Host "✅ TLS secret already exists" -ForegroundColor Green
           }
