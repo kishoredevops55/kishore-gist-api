@@ -137,7 +137,7 @@ jobs:
             Write-Host "✅ DNS entry already exists: $existingEntry" -ForegroundColor Green
           }
       
-      - name: Wait for ingress to be ready
+      - name: Wait for ingress and Test API
         run: |
           Write-Host "Waiting for ingress controller and backends to be ready..." -ForegroundColor Yellow
           Write-Host ""
@@ -158,68 +158,57 @@ jobs:
             --timeout=60s
           
           Write-Host "✅ Application pods are ready" -ForegroundColor Green
+          Write-Host ""
           
-                    # Setup persistent port-forward for Ingress (Robust method for Windows)
-          Write-Host "Setting up port-forward to ingress controller..." -ForegroundColor Yellow
-          $ingressPod = $(kubectl get pod -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath="{.items[0].metadata.name}")
+          # Setup port-forward to ingress controller (use 8080 to avoid admin requirement)
+          Write-Host "Setting up port-forward to ingress controller on port 8080..." -ForegroundColor Yellow
+          $ingressPod = kubectl get pod -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath="{.items[0].metadata.name}"
           
-          # Start background job for port forward (80->80)
-          Start-Job -ScriptBlock {
+          # Start background job for port forward (8080->80)
+          $pfJob = Start-Job -ScriptBlock {
             param($podName)
-            kubectl port-forward -n ingress-nginx pod/$podName 80:80
+            kubectl port-forward -n ingress-nginx pod/$podName 8080:80 2>&1
           } -ArgumentList $ingressPod
           
           Write-Host "Waiting for port-forward to accept connections..."
-          Start-Sleep -Seconds 5
+          Start-Sleep -Seconds 8
+          
+          # Verify port-forward is running
+          $jobState = Get-Job -Id $pfJob.Id
+          Write-Host "Port-forward job state: $($jobState.State)"
           
           # Show ingress details
           Write-Host ""
           Write-Host "Ingress details:" -ForegroundColor Cyan
           kubectl describe ingress github-gists-api -n ${{ env.NAMESPACE }}
-      
-      - name: Test API via Ingress (Production-grade)
-        run: |
+          
           Write-Host ""
           Write-Host "========================================" -ForegroundColor Cyan
           Write-Host "Testing API via Ingress Load Balancer" -ForegroundColor Cyan
           Write-Host "========================================" -ForegroundColor Cyan
           Write-Host ""
           
-          # Check if DNS is configured
-          $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
-          $dnsConfigured = (Get-Content $hostsFile | Select-String -Pattern "gists.local") -ne $null
-          
-          if ($dnsConfigured) {
-            Write-Host "✅ DNS configured for gists.local" -ForegroundColor Green
-            $baseUrl = "http://gists.local"
-          } else {
-            Write-Host "⚠️  DNS not configured, using localhost with Host header" -ForegroundColor Yellow
-            $baseUrl = "http://localhost"
-          }
-          
-          Write-Host ""
+          $baseUrl = "http://localhost:8080"
           
           # Test health endpoint
           Write-Host "Testing: $baseUrl/health"
           try {
-            if ($dnsConfigured) {
-              $health = Invoke-RestMethod -Uri "$baseUrl/health" -TimeoutSec 10
-            } else {
-              $health = Invoke-RestMethod -Uri "$baseUrl/health" -Headers @{ Host = "gists.local" } -TimeoutSec 10
-            }
+            $health = Invoke-RestMethod -Uri "$baseUrl/health" -Headers @{ Host = "gists.local" } -TimeoutSec 15
             Write-Host "✅ Health check: $($health.status)" -ForegroundColor Green
           } catch {
             Write-Host "❌ Health check failed: $_" -ForegroundColor Red
             Write-Host ""
-            Write-Host "Troubleshooting information:" -ForegroundColor Yellow
-            Write-Host "1. Check ingress controller logs:"
-            Write-Host "   kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=50"
+            Write-Host "Port-forward job output:" -ForegroundColor Yellow
+            Receive-Job -Id $pfJob.Id
             Write-Host ""
-            Write-Host "2. Check application logs:"
-            Write-Host "   kubectl logs -n ${{ env.NAMESPACE }} -l app=github-gists-api --tail=50"
+            Write-Host "Troubleshooting:" -ForegroundColor Yellow
+            Write-Host "1. Ingress controller logs:"
+            kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=30
             Write-Host ""
-            Write-Host "3. Verify ingress backend:"
-            Write-Host "   kubectl describe ingress github-gists-api -n ${{ env.NAMESPACE }}"
+            Write-Host "2. Application logs:"
+            kubectl logs -n ${{ env.NAMESPACE }} -l app=github-gists-api --tail=30
+            Stop-Job -Id $pfJob.Id -ErrorAction SilentlyContinue
+            Remove-Job -Id $pfJob.Id -Force -ErrorAction SilentlyContinue
             exit 1
           }
           
@@ -227,16 +216,14 @@ jobs:
           Write-Host ""
           Write-Host "Testing: $baseUrl/metrics"
           try {
-            if ($dnsConfigured) {
-              $metrics = Invoke-WebRequest -Uri "$baseUrl/metrics" -UseBasicParsing -TimeoutSec 10
-            } else {
-              $metrics = Invoke-WebRequest -Uri "$baseUrl/metrics" -Headers @{ Host = "gists.local" } -UseBasicParsing -TimeoutSec 10
-            }
+            $metrics = Invoke-WebRequest -Uri "$baseUrl/metrics" -Headers @{ Host = "gists.local" } -UseBasicParsing -TimeoutSec 15
             if ($metrics.Content -like "*http_requests_total*") {
               Write-Host "✅ Metrics endpoint working" -ForegroundColor Green
             }
           } catch {
             Write-Host "❌ Metrics check failed: $_" -ForegroundColor Red
+            Stop-Job -Id $pfJob.Id -ErrorAction SilentlyContinue
+            Remove-Job -Id $pfJob.Id -Force -ErrorAction SilentlyContinue
             exit 1
           }
           
@@ -244,23 +231,28 @@ jobs:
           Write-Host ""
           Write-Host "Testing: $baseUrl/octocat"
           try {
-            if ($dnsConfigured) {
-              $gists = Invoke-RestMethod -Uri "$baseUrl/octocat" -TimeoutSec 10
-            } else {
-              $gists = Invoke-RestMethod -Uri "$baseUrl/octocat" -Headers @{ Host = "gists.local" } -TimeoutSec 10
-            }
+            $gists = Invoke-RestMethod -Uri "$baseUrl/octocat" -Headers @{ Host = "gists.local" } -TimeoutSec 15
             Write-Host "✅ Found $($gists.Count) gists for octocat" -ForegroundColor Green
           } catch {
             Write-Host "❌ Gists endpoint failed: $_" -ForegroundColor Red
+            Stop-Job -Id $pfJob.Id -ErrorAction SilentlyContinue
+            Remove-Job -Id $pfJob.Id -Force -ErrorAction SilentlyContinue
             exit 1
           }
+          
+          # Cleanup
+          Stop-Job -Id $pfJob.Id -ErrorAction SilentlyContinue
+          Remove-Job -Id $pfJob.Id -Force -ErrorAction SilentlyContinue
           
           Write-Host ""
           Write-Host "========================================" -ForegroundColor Cyan
           Write-Host "🎉 All API tests passed!" -ForegroundColor Green
           Write-Host "========================================" -ForegroundColor Cyan
           Write-Host ""
-          Write-Host "Access your API at: http://gists.local/<username>" -ForegroundColor Yellow
-          Write-Host "Example: http://gists.local/octocat" -ForegroundColor Yellow
+          Write-Host "Access your API locally:" -ForegroundColor Yellow
+          Write-Host "  kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8080:80" -ForegroundColor Cyan
+          Write-Host "  curl -H 'Host: gists.local' http://localhost:8080/octocat" -ForegroundColor Cyan
           Write-Host ""
-          Stop-Job -Name *
+          Write-Host "Or if DNS is configured (gists.local -> 127.0.0.1):" -ForegroundColor Yellow
+          Write-Host "  http://gists.local:8080/octocat" -ForegroundColor Cyan
+          Write-Host ""
