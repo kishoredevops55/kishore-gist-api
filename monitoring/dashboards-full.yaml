@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+data:
+  # 1. Main App Dashboard (Metrics + Logs + Traces)
+  github-gists-api.json: |
+    {
+      "title": "GitHub Gists API (Full)",
+      "uid": "api-full",
+      "refresh": "5s",
+      "tags": ["app", "logs", "traces"],
+      "panels": [
+        { "id": 1, "title": "Request Rate", "type": "timeseries", "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 }, "targets": [{ "expr": "sum(rate(http_requests_total{job=~\".*github-gists.*\"}[5m]))", "legendFormat": "Req/s" }] },
+        { "id": 2, "title": "Latency (P95)", "type": "timeseries", "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 }, "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=~\".*github-gists.*\"}[5m])) by (le)) * 1000", "legendFormat": "ms" }] },
+        { "id": 3, "title": "Errors", "type": "stat", "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 }, "targets": [{ "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m]))", "legendFormat": "5xx/s" }] },
+        { "id": 4, "title": "Loki Logs", "type": "logs", "gridPos": { "h": 10, "w": 24, "x": 0, "y": 8 }, "datasource": { "uid": "loki", "type": "loki" }, "targets": [{ "expr": "{job=~\".*github-gists.*\"}", "refId": "A" }] },
+        { "id": 5, "title": "Tempo Traces", "type": "table", "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 }, "datasource": { "uid": "tempo", "type": "tempo" }, "targets": [{ "queryType": "traceql", "query": "{ .service.name = \"github-gists-api.production\" }", "limit": 10 }] }
+      ]
+    }
+  
+  # 2. Kubernetes Cluster (Node Exporter + CDM)
+  k8s-cluster.json: |
+    {
+      "title": "Kubernetes Cluster Status",
+      "uid": "k8s-cluster",
+      "refresh": "10s",
+      "tags": ["k8s", "nodes"],
+      "panels": [
+        { "id": 1, "title": "CPU Usage (Cores)", "type": "timeseries", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }, "targets": [{ "expr": "sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[5m])) by (instance)", "legendFormat": "{{instance}}" }] },
+        { "id": 2, "title": "Memory Usage (%)", "type": "timeseries", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }, "targets": [{ "expr": "100 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100)", "legendFormat": "{{instance}}" }] },
+        { "id": 3, "title": "Pod Count per Namespace", "type": "barchart", "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 }, "targets": [{ "expr": "count(kube_pod_info) by (namespace)", "legendFormat": "{{namespace}}" }] }
+      ]
+    }
+
+  # 3. Synthetic Monitoring (Blackbox)
+  synthetic-checks.json: |
+    {
+      "title": "Synthetic Checks (Uptime)",
+      "uid": "synthetic",
+      "refresh": "10s",
+      "tags": ["uptime", "blackbox"],
+      "panels": [
+        { "id": 1, "title": "Endpoint Status", "type": "stat", "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 }, "targets": [{ "expr": "probe_success", "legendFormat": "{{instance}}" }], "options": { "colorMode": "background" } },
+        { "id": 2, "title": "DNS Lookup Time", "type": "timeseries", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 }, "targets": [{ "expr": "probe_dns_lookup_time_seconds", "legendFormat": "{{instance}}" }] },
+        { "id": 3, "title": "HTTPS Latency", "type": "timeseries", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 }, "targets": [{ "expr": "probe_duration_seconds", "legendFormat": "{{instance}} (Seconds)" }] },
+        { "id": 4, "title": "Certificate Expiry", "type": "table", "gridPos": { "h": 6, "w": 24, "x": 0, "y": 14 }, "targets": [{ "expr": "(probe_ssl_earliest_cert_expiry - time()) / 86400", "legendFormat": "{{instance}} (Days Left)" }] }
+      ]
+    }
+
+  # 4. RUM (Faro)
+  rum-analytics.json: |
+    {
+      "title": "RUM - Real User Monitoring",
+      "uid": "rum",
+      "refresh": "10s",
+      "tags": ["rum", "frontend"],
+      "panels": [
+        { "id": 1, "title": "Page Loads", "type": "timeseries", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }, "targets": [{ "expr": "sum(rate(faro_web_vitals_ttfb_total[5m]))", "legendFormat": "Page Views/s" }] },
+        { "id": 2, "title": "Core Web Vitals - LCP", "type": "timeseries", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }, "targets": [{ "expr": "histogram_quantile(0.75, sum(rate(faro_web_vitals_lcp_total[5m])) by (le))", "legendFormat": "LCP (75th pctl)" }] },
+        { "id": 3, "title": "Browser Errors", "type": "state", "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 }, "targets": [{ "expr": "sum(rate(faro_exceptions_total[5m]))", "legendFormat": "Exceptions/s" }] }
+      ]
+    }

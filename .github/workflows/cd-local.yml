@@ -217,6 +217,10 @@ jobs:
           kubectl apply -f monitoring/complete-monitoring-stack.yaml
           Write-Host "[OK] Core monitoring deployed (Prometheus, Grafana, Blackbox)" -ForegroundColor Green
           
+          # Deploy Exporters (Node Exporter, Kube State Metrics)
+          kubectl apply -f monitoring/exporters.yaml
+          Write-Host "[OK] Exporters deployed (Node Exporter, KSM, cAdvisor)" -ForegroundColor Green
+
           # Wait for Prometheus
           kubectl wait --for=condition=ready pod -l app=prometheus -n monitoring --timeout=2m
           Write-Host "[OK] Prometheus ready" -ForegroundColor Green
@@ -230,13 +234,22 @@ jobs:
           Write-Host "Deploying Tempo for distributed tracing..." -ForegroundColor Cyan
           kubectl apply -f monitoring/tempo-standalone.yaml
           Write-Host "[OK] Tempo deployed" -ForegroundColor Green
+
+          # Connect Istio to Tempo (Zipkin Shim)
+          kubectl apply -f monitoring/istio-tracing-shim.yaml
+          kubectl rollout restart deployment/github-gists-api -n ${{ env.NAMESPACE }}
+          Write-Host "[OK] Istio tracing connected to Tempo" -ForegroundColor Green
           
           # Deploy RUM collector
           Write-Host "Deploying Faro RUM collector..." -ForegroundColor Cyan
           kubectl apply -f monitoring/faro-rum-standalone.yaml
           Write-Host "[OK] Faro RUM collector deployed" -ForegroundColor Green
+
+          # Apply Full Dashboards
+          kubectl apply -f monitoring/dashboards-full.yaml
+          Write-Host "[OK] Enhanced Dashboards applied" -ForegroundColor Green
           
-          # Restart Grafana to pick up new datasources
+          # Restart Grafana to pick up new datasources and dashboards
           Start-Sleep -Seconds 10
           kubectl rollout restart deployment/grafana -n monitoring
           kubectl rollout status deployment/grafana -n monitoring --timeout=2m
@@ -247,7 +260,7 @@ jobs:
           Write-Host ""
           Write-Host "Verifying monitoring components..." -ForegroundColor Cyan
           
-          $components = @("prometheus", "grafana", "blackbox-exporter", "loki", "tempo", "promtail", "faro-collector")
+          $components = @("prometheus", "grafana", "blackbox-exporter", "loki", "tempo", "promtail", "faro-collector", "node-exporter", "kube-state-metrics")
           foreach ($component in $components) {
             $podCount = (kubectl get pods -n monitoring -l app=$component --no-headers 2>$null | Measure-Object).Count
             if ($podCount -gt 0) {
@@ -291,6 +304,8 @@ jobs:
           Write-Host "  [OK] Tempo (Traces) - http://tempo:3200"
           Write-Host "  [OK] Blackbox Exporter (Synthetic Monitoring)"
           Write-Host "  [OK] Faro RUM Collector - https://rum.kishore.local/collect"
+          Write-Host "  [OK] Node Exporter (Cluster Metrics)"
+          Write-Host "  [OK] Kube State Metrics (Cluster Objects)"
           Write-Host ""
           Write-Host "Datasources in Grafana:"
           Write-Host "  - Prometheus (Default)"
