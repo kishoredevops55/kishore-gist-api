@@ -90,20 +90,18 @@ jobs:
             }
             
             # Install Istio with demo profile (includes ingress gateway)
+            # Use cmd to avoid PowerShell treating ASCII art as error
             Write-Host "Running istioctl install..."
-            $installResult = .\istioctl.exe install --set profile=demo -y 2>&1
-            Write-Host $installResult
-            
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "⚠️  Istio installation had issues, checking status..." -ForegroundColor Yellow
-            }
+            $ErrorActionPreference = "Continue"
+            & cmd /c ".\istioctl.exe install --set profile=demo -y"
+            $ErrorActionPreference = "Stop"
             
             # Wait for namespace to be created
-            Start-Sleep -Seconds 5
+            Start-Sleep -Seconds 10
             
             Write-Host "Waiting for Istio components to be ready..."
             $retries = 0
-            $maxRetries = 6
+            $maxRetries = 12
             while ($retries -lt $maxRetries) {
               $istiodReady = kubectl get pods -n istio-system -l app=istiod -o jsonpath="{.items[*].status.phase}" 2>$null
               if ($istiodReady -eq "Running") {
@@ -111,6 +109,7 @@ jobs:
                 break
               }
               Write-Host "Waiting for Istiod... (attempt $($retries + 1)/$maxRetries)"
+              kubectl get pods -n istio-system 2>$null
               Start-Sleep -Seconds 10
               $retries++
             }
