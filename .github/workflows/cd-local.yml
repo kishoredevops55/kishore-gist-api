@@ -13,7 +13,7 @@ jobs:
       IMAGE_NAME: github-gists-api:latest
       NAMESPACE: production
       CUSTOM_DNS: gists.kishore.local
-      ISTIO_VERSION: "1.24.0"
+      ISTIO_VERSION: "1.23.4"
     
     steps:
       - uses: actions/checkout@v4
@@ -66,35 +66,79 @@ jobs:
       
       - name: Install Istio Service Mesh
         run: |
-          # Check if Istio is already installed
-          $istioNs = kubectl get namespace istio-system --ignore-not-found=true
-          if ([string]::IsNullOrEmpty($istioNs)) {
+          # Check if Istio is already installed and running
+          $istiodPod = kubectl get pods -n istio-system -l app=istiod --ignore-not-found=true 2>$null
+          if ([string]::IsNullOrEmpty($istiodPod) -or $istiodPod -notlike "*Running*") {
             Write-Host "Installing Istio ${{ env.ISTIO_VERSION }}..." -ForegroundColor Yellow
+            
+            # Create istio-system namespace if not exists
+            kubectl create namespace istio-system --dry-run=client -o yaml | kubectl apply -f -
             
             # Download istioctl
             $istioUrl = "https://github.com/istio/istio/releases/download/${{ env.ISTIO_VERSION }}/istioctl-${{ env.ISTIO_VERSION }}-win-amd64.zip"
-            Invoke-WebRequest -Uri $istioUrl -OutFile istioctl.zip
+            Write-Host "Downloading from: $istioUrl"
+            Invoke-WebRequest -Uri $istioUrl -OutFile istioctl.zip -UseBasicParsing
             Expand-Archive -Path istioctl.zip -DestinationPath . -Force
             
+            # Verify istioctl exists
+            if (Test-Path ".\istioctl.exe") {
+              Write-Host "✅ istioctl downloaded successfully"
+            } else {
+              Write-Host "❌ istioctl not found after extraction" -ForegroundColor Red
+              Get-ChildItem -Recurse | Where-Object { $_.Name -like "istioctl*" }
+              exit 1
+            }
+            
             # Install Istio with demo profile (includes ingress gateway)
-            .\istioctl.exe install --set profile=demo -y
+            Write-Host "Running istioctl install..."
+            $installResult = .\istioctl.exe install --set profile=demo -y 2>&1
+            Write-Host $installResult
+            
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "⚠️  Istio installation had issues, checking status..." -ForegroundColor Yellow
+            }
+            
+            # Wait for namespace to be created
+            Start-Sleep -Seconds 5
             
             Write-Host "Waiting for Istio components to be ready..."
-            kubectl wait --namespace istio-system `
-              --for=condition=ready pod `
-              --selector=app=istiod `
-              --timeout=300s
+            $retries = 0
+            $maxRetries = 6
+            while ($retries -lt $maxRetries) {
+              $istiodReady = kubectl get pods -n istio-system -l app=istiod -o jsonpath="{.items[*].status.phase}" 2>$null
+              if ($istiodReady -eq "Running") {
+                Write-Host "✅ Istiod is running" -ForegroundColor Green
+                break
+              }
+              Write-Host "Waiting for Istiod... (attempt $($retries + 1)/$maxRetries)"
+              Start-Sleep -Seconds 10
+              $retries++
+            }
             
-            kubectl wait --namespace istio-system `
-              --for=condition=ready pod `
-              --selector=app=istio-ingressgateway `
-              --timeout=300s
+            # Check ingress gateway
+            $retries = 0
+            while ($retries -lt $maxRetries) {
+              $gatewayReady = kubectl get pods -n istio-system -l app=istio-ingressgateway -o jsonpath="{.items[*].status.phase}" 2>$null
+              if ($gatewayReady -eq "Running") {
+                Write-Host "✅ Istio Ingress Gateway is running" -ForegroundColor Green
+                break
+              }
+              Write-Host "Waiting for Istio Ingress Gateway... (attempt $($retries + 1)/$maxRetries)"
+              Start-Sleep -Seconds 10
+              $retries++
+            }
             
-            Write-Host "✅ Istio installed successfully" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "Istio pods status:" -ForegroundColor Cyan
+            kubectl get pods -n istio-system
+            
           } else {
-            Write-Host "✅ Istio already installed" -ForegroundColor Green
+            Write-Host "✅ Istio already installed and running" -ForegroundColor Green
             kubectl get pods -n istio-system
           }
+          
+          # Ensure production namespace exists before labeling
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
           
           # Enable sidecar injection for production namespace
           kubectl label namespace ${{ env.NAMESPACE }} istio-injection=enabled --overwrite
@@ -107,41 +151,57 @@ jobs:
           # Check if secret already exists
           $tlsSecret = kubectl get secret gists-tls-secret -n istio-system --ignore-not-found=true
           if ([string]::IsNullOrEmpty($tlsSecret)) {
-            # Create OpenSSL config file for SAN (Subject Alternative Names)
-            $opensslConf = @"
-          [req]
-          distinguished_name = req_distinguished_name
-          x509_extensions = v3_req
-          prompt = no
-          [req_distinguished_name]
-          CN = ${{ env.CUSTOM_DNS }}
-          O = Kishore DevOps
-          [v3_req]
-          keyUsage = keyEncipherment, dataEncipherment
-          extendedKeyUsage = serverAuth
-          subjectAltName = @alt_names
-          [alt_names]
-          DNS.1 = ${{ env.CUSTOM_DNS }}
-          DNS.2 = gists.local
-          DNS.3 = localhost
-          "@
-            $opensslConf | Out-File -FilePath openssl.cnf -Encoding ascii
+            # Use PowerShell to generate self-signed certificate (no OpenSSL needed)
+            $cert = New-SelfSignedCertificate `
+              -DnsName "${{ env.CUSTOM_DNS }}", "gists.local", "localhost" `
+              -CertStoreLocation "Cert:\CurrentUser\My" `
+              -KeyAlgorithm RSA `
+              -KeyLength 2048 `
+              -NotAfter (Get-Date).AddYears(1) `
+              -FriendlyName "Gists API TLS Certificate"
             
-            # Generate private key and certificate in one command
-            openssl req -x509 -nodes -days 365 -newkey rsa:2048 `
-              -keyout tls.key `
-              -out tls.crt `
-              -config openssl.cnf `
-              -extensions v3_req
+            # Export certificate to PEM format
+            $certPath = "tls.crt"
+            $keyPath = "tls.key"
+            $pfxPath = "tls.pfx"
+            $password = ConvertTo-SecureString -String "temppass" -Force -AsPlainText
+            
+            # Export to PFX first
+            Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $password | Out-Null
+            
+            # Use certutil to convert PFX to PEM (available on Windows)
+            # Extract certificate
+            certutil -encode (Get-Item $cert.PSPath).RawData $certPath | Out-Null
+            
+            # For the key, we need a different approach - create base64 encoded secret directly
+            # Export certificate as base64
+            $certBase64 = [Convert]::ToBase64String($cert.RawData)
+            
+            # Get the private key
+            $rsaKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+            $keyBytes = $rsaKey.ExportRSAPrivateKey()
+            $keyBase64 = [Convert]::ToBase64String($keyBytes)
+            
+            # Create PEM formatted files
+            $certPem = "-----BEGIN CERTIFICATE-----`n"
+            $certPem += ($certBase64 -replace "(.{64})", "`$1`n")
+            $certPem += "`n-----END CERTIFICATE-----"
+            $certPem | Out-File -FilePath $certPath -Encoding ascii -NoNewline
+            
+            $keyPem = "-----BEGIN RSA PRIVATE KEY-----`n"
+            $keyPem += ($keyBase64 -replace "(.{64})", "`$1`n")
+            $keyPem += "`n-----END RSA PRIVATE KEY-----"
+            $keyPem | Out-File -FilePath $keyPath -Encoding ascii -NoNewline
             
             # Create TLS secret in istio-system namespace
             kubectl create secret tls gists-tls-secret `
-              --cert=tls.crt `
-              --key=tls.key `
+              --cert=$certPath `
+              --key=$keyPath `
               -n istio-system
             
-            # Cleanup temp files
-            Remove-Item tls.key, tls.crt, openssl.cnf -ErrorAction SilentlyContinue
+            # Cleanup
+            Remove-Item $cert.PSPath -ErrorAction SilentlyContinue
+            Remove-Item $certPath, $keyPath, $pfxPath -ErrorAction SilentlyContinue
             
             Write-Host "✅ TLS certificate created for ${{ env.CUSTOM_DNS }}" -ForegroundColor Green
           } else {
