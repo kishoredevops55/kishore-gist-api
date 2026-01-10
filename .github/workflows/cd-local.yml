@@ -9,7 +9,7 @@ on:
 
 jobs:
   deploy-to-kind:
-    runs-on: [self-hosted, kishore-poc]  # Target your local runner
+    runs-on: [kishore-poc]  # Target your local runner
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     
     steps:
