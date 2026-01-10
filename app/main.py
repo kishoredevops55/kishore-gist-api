@@ -4,6 +4,7 @@ Simple FastAPI app to fetch public GitHub gists for any user.
 """
 from contextlib import asynccontextmanager
 import logging
+import os
 import time
 from typing import Any, Dict, List
 
@@ -17,6 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GITHUB_API_URL = "https://api.github.com"
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 TIMEOUT = 10.0
 
 # Prometheus metrics
@@ -67,10 +69,17 @@ async def lifespan(app: FastAPI):
     """Initialize HTTP client on startup and close on shutdown."""
 
     global http_client
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"token {GITHUB_TOKEN}"
+        logger.info("GitHub token configured - 5000 requests/hour")
+    else:
+        logger.warning("No GITHUB_TOKEN - limited to 60 requests/hour")
+    
     http_client = httpx.AsyncClient(
         timeout=TIMEOUT,
         follow_redirects=True,
-        headers={"Accept": "application/vnd.github.v3+json"},
+        headers=headers,
     )
     logger.info("App started")
     try:
@@ -79,7 +88,6 @@ async def lifespan(app: FastAPI):
         if http_client:
             await http_client.aclose()
         logger.info("App stopped")
-
 
 app = FastAPI(
     title="GitHub Gists API",
