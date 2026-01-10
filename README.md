@@ -789,13 +789,179 @@ SonarCloud:
 
 ## 📊 **Monitoring & Observability**
 
-### 📈 **Prometheus Metrics**
+### 🎯 **Complete Observability Stack**
+
+This project implements a **production-grade, full-stack observability solution** with:
+
+<table>
+<tr>
+<td width="25%" align="center">
+
+#### 📈 **Metrics**
+Prometheus<br/>
+Node Exporter<br/>
+Kube State Metrics<br/>
+cAdvisor<br/>
+Blackbox Exporter
+
+</td>
+<td width="25%" align="center">
+
+#### 📋 **Logs**
+Loki<br/>
+Promtail<br/>
+Centralized Aggregation<br/>
+Label-based Filtering
+
+</td>
+<td width="25%" align="center">
+
+#### 🔍 **Traces**
+Tempo<br/>
+Istio Integration<br/>
+Zipkin Protocol<br/>
+Service Graphs
+
+</td>
+<td width="25%" align="center">
+
+#### 🌐 **Synthetic**
+Blackbox Probes<br/>
+HTTPS Latency<br/>
+Cert Expiry<br/>
+DNS Checks
+
+</td>
+</tr>
+</table>
+
+---
+
+### 🚀 **Access Grafana**
+
+```bash
+# Direct access via permanent proxy (no port-forward needed)
+https://kishoregrafana.local
+
+# Default credentials (override with GitHub Secrets)
+Username: admin
+Password: admin123
+```
+
+**Requirements:**
+- Add to Windows hosts file: `127.0.0.1 kishoregrafana.local`
+- Accept self-signed certificate in browser
+
+---
+
+### 📊 **Available Dashboards**
+
+<details open>
+<summary><b>1️⃣ GitHub Gists API (Full Observability)</b></summary>
+
+**Location:** Dashboards → GitHub Gists API (Full)
+
+**Panels:**
+- 📈 **Metrics Section**
+  - Request Rate (requests/sec)
+  - P95 Latency (milliseconds)
+  - Error Rate (5xx responses)
+  - Cache Hit Rate (%)
+  - GitHub API Calls by Status
+
+- 📋 **Logs Section** (Loki)
+  - Real-time application logs
+  - Filtered by namespace/pod
+  - Searchable and correlatable
+
+- 🔍 **Traces Section** (Tempo)
+  - Recent distributed traces
+  - Request flow through Istio
+  - Linked to logs for same request
+
+**Use Case:** Monitor your application's health, performance, and debug issues
+
+</details>
+
+<details open>
+<summary><b>2️⃣ Kubernetes Cluster Status</b></summary>
+
+**Location:** Dashboards → Kubernetes Cluster Status
+
+**Panels:**
+- 🖥️ **Node Metrics** (Node Exporter)
+  - CPU Usage per Node (cores)
+  - Memory Usage per Node (%)
+  - Disk I/O and Network Traffic
+  
+- ☸️ **Cluster State** (Kube State Metrics)
+  - Pod Count per Namespace
+  - Deployment Status
+  - Resource Quotas
+  
+- 📦 **Container Metrics** (cAdvisor)
+  - Container CPU/Memory
+  - Restart counts
+  - OOM kills
+
+**Use Case:** Monitor cluster health and capacity planning
+
+</details>
+
+<details open>
+<summary><b>3️⃣ Synthetic Checks (Uptime Monitoring)</b></summary>
+
+**Location:** Dashboards → Synthetic Checks (Uptime)
+
+**Panels:**
+- ✅ **Endpoint Status** (Up/Down)
+  - `/health` endpoint probe
+  - Real-time status indicators
+  
+- 🌐 **HTTPS Latency**
+  - DNS lookup time
+  - TLS handshake duration
+  - Total request duration
+  
+- 🔐 **Certificate Monitoring**
+  - Days until certificate expiry
+  - Alert on expiration warnings
+
+**Use Case:** Proactive uptime and SSL monitoring
+
+</details>
+
+<details open>
+<summary><b>4️⃣ RUM - Real User Monitoring</b></summary>
+
+**Location:** Dashboards → RUM - Real User Monitoring
+
+**Panels:**
+- 📊 **Core Web Vitals**
+  - Page Load Times
+  - Largest Contentful Paint (LCP)
+  - Time to First Byte (TTFB)
+  
+- ⚠️ **Frontend Errors**
+  - JavaScript exceptions
+  - Browser errors
+  - User session tracking
+
+**Collector Endpoint:** `https://rum.kishore.local/collect`
+
+**Use Case:** Monitor frontend performance (requires browser integration)
+
+</details>
+
+---
+
+### 📈 **Application Metrics (Prometheus)**
 
 <table>
 <tr>
 <td width="50%">
 
-#### **Application Metrics**
+#### **Custom Application Metrics**
 
 | Metric | Type | Labels |
 |--------|------|--------|
@@ -809,45 +975,152 @@ SonarCloud:
 </td>
 <td width="50%">
 
-#### **Istio Metrics** (automatic)
+#### **Infrastructure Metrics**
 
-- Request rate (RPS)
-- Error rate (4xx, 5xx)
-- Request duration (P50, P95, P99)
-- Connection pool stats
-- Circuit breaker status
-- mTLS connection count
+**Node Exporter:**
+- `node_cpu_seconds_total`
+- `node_memory_MemAvailable_bytes`
+- `node_disk_io_time_seconds_total`
+
+**Kube State Metrics:**
+- `kube_pod_status_phase`
+- `kube_deployment_status_replicas`
+- `kube_node_status_condition`
+
+**cAdvisor (Kubelet):**
+- `container_cpu_usage_seconds_total`
+- `container_memory_working_set_bytes`
+- `container_network_receive_bytes_total`
 
 </td>
 </tr>
 </table>
 
-### 📊 **Grafana Dashboard**
+---
 
-```bash
-# Import dashboard from monitoring/grafana-dashboard.json
-# Includes:
-# - Request rate & latency graphs
-# - Error rate breakdown
-# - Cache hit/miss ratio
-# - Pod resource usage
-# - GitHub API rate limit tracking
+### 📋 **Logs (Loki)**
+
+**Architecture:**
+- **Promtail** DaemonSet collects logs from all pods
+- **Loki** aggregates and indexes by labels (no full-text indexing)
+- **Grafana** queries Loki for log visualization
+
+**Query Examples:**
+```logql
+# All application logs
+{namespace="production", app="github-gists-api"}
+
+# Error logs only
+{namespace="production"} |= "ERROR"
+
+# Logs from specific pod
+{pod="github-gists-api-abc123"}
+
+# Rate of error logs
+rate({namespace="production"} |= "ERROR" [5m])
 ```
 
-### 🔍 **Istio Observability**
+**Benefits:**
+- ✅ Centralized log aggregation
+- ✅ Label-based filtering (fast)
+- ✅ Integration with traces (correlated debugging)
+
+---
+
+### 🔍 **Distributed Tracing (Tempo)**
+
+**Architecture:**
+- **Istio sidecars** automatically generate trace spans
+- **Zipkin protocol** forwards traces to Tempo
+- **Tempo** stores traces and provides TraceQL queries
+- **Grafana** visualizes trace spans and service graphs
+
+**Features:**
+- ✅ Zero-code instrumentation (via Istio)
+- ✅ Request flow visualization
+- ✅ Latency breakdown per service
+- ✅ Correlated with logs (same request ID)
+
+**Use Cases:**
+1. Identify slow services in request chain
+2. Debug timeout issues
+3. Understand service dependencies
+4. Root cause analysis for errors
+
+---
+
+### 🌐 **Synthetic Monitoring (Blackbox)**
+
+**Probes Configured:**
+- HTTPS endpoint checks (`https://gists.kishore.local/health`)
+- DNS resolution timing
+- TLS certificate validation
+- Response time measurements
+
+**Metrics Exposed:**
+- `probe_success` (0 or 1)
+- `probe_duration_seconds`
+- `probe_ssl_earliest_cert_expiry`
+- `probe_dns_lookup_time_seconds`
+
+**Alerting:** Configure alerts on probe failures for proactive monitoring
+
+---
+
+### 🔧 **Datasources Configured in Grafana**
+
+| Datasource | Type | URL | Purpose |
+|------------|------|-----|---------|
+| **Prometheus** | Metrics | `http://prometheus:9090` | Application & infrastructure metrics |
+| **Loki** | Logs | `http://loki:3100` | Centralized log aggregation |
+| **Tempo** | Traces | `http://tempo:3200` | Distributed tracing |
+| **Blackbox** | Metrics | `http://blackbox-exporter:9115` | Synthetic uptime monitoring |
+
+**All datasources are pre-configured** via the CD pipeline and require no manual setup.
+
+---
+
+### 🎯 **Monitoring Components Status**
 
 ```bash
-# Kiali (Service Graph)
+# Check all monitoring pods
+kubectl get pods -n monitoring
+
+# Expected output:
+# - prometheus (metrics collection)
+# - grafana (visualization)
+# - loki (log aggregation)
+# - tempo (trace storage)
+# - promtail (log collector daemonset)
+# - blackbox-exporter (synthetic probes)
+# - node-exporter (node metrics daemonset)
+# - kube-state-metrics (k8s object metrics)
+# - faro-collector (RUM collector)
+```
+
+---
+
+### 🚨 **Alerting (Prometheus Rules)**
+
+Pre-configured alerts include:
+- ⚠️ High error rate (>5% for 5 minutes)
+- ⚠️ High latency (P95 >2 seconds)
+- 🔴 Pod down (any pod unreachable for 2 minutes)
+
+**Alert Manager Integration:** Ready for Slack/PagerDuty/Email notifications
+
+---
+
+### 🔍 **Istio Observability (Additional)**
+
+```bash
+# Service Mesh Dashboard
 istioctl dashboard kiali
 
-# Grafana (Metrics)
-istioctl dashboard grafana
-
-# Jaeger (Distributed Tracing)
-istioctl dashboard jaeger
-
-# Prometheus (Raw Metrics)
+# Istio Control Plane Metrics
 istioctl dashboard prometheus
+
+# Note: Grafana and tracing now use our custom stack above
 ```
 
 ---

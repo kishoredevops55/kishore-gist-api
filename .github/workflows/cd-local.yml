@@ -229,6 +229,11 @@ jobs:
           Write-Host "Deploying Loki for log aggregation..." -ForegroundColor Cyan
           kubectl apply -f monitoring/loki-standalone.yaml
           Write-Host "[OK] Loki deployed" -ForegroundColor Green
+
+          # Deploy Fixed Promtail (Log Collector with proper K8s config)
+          kubectl apply -f monitoring/promtail-fixed.yaml
+          kubectl rollout status daemonset/promtail -n monitoring --timeout=60s
+          Write-Host "[OK] Promtail deployed (Fixed K8s log collection)" -ForegroundColor Green
           
           # Deploy Tempo (Traces)
           Write-Host "Deploying Tempo for distributed tracing..." -ForegroundColor Cyan
@@ -245,9 +250,13 @@ jobs:
           kubectl apply -f monitoring/faro-rum-standalone.yaml
           Write-Host "[OK] Faro RUM collector deployed" -ForegroundColor Green
 
-          # Apply Full Dashboards
-          kubectl apply -f monitoring/dashboards-full.yaml
-          Write-Host "[OK] Enhanced Dashboards applied" -ForegroundColor Green
+          # Apply Fixed Datasources (Loki + Tempo properly linked)
+          kubectl apply -f monitoring/grafana-datasources-fixed.yaml
+          Write-Host "[OK] Grafana datasources configured (Loki+Tempo linked)" -ForegroundColor Green
+
+          # Apply Complete Dashboards
+          kubectl apply -f monitoring/grafana-dashboards-complete.yaml
+          Write-Host "[OK] Complete Dashboards applied" -ForegroundColor Green
           
           # Restart Grafana to pick up new datasources and dashboards
           Start-Sleep -Seconds 10
@@ -308,7 +317,13 @@ jobs:
           Write-Host "  [OK] Kube State Metrics (Cluster Objects)"
           Write-Host ""
           Write-Host "Datasources in Grafana:"
-          Write-Host "  - Prometheus (Default)"
-          Write-Host "  - Loki (Logs)"
-          Write-Host "  - Tempo (Traces)"
-          Write-Host "  - Blackbox"
+          Write-Host "  - Prometheus (Default) - Metrics"
+          Write-Host "  - Loki (Logs) - Log aggregation"
+          Write-Host "  - Tempo (Traces) - Distributed tracing"
+          Write-Host "  - Blackbox - Synthetic monitoring"
+          Write-Host ""
+          Write-Host "Dashboards Available:"
+          Write-Host "  - GitHub Gists API - Full Observability (Metrics+Logs+Traces)"
+          Write-Host "  - Kubernetes Cluster Status (Node/Pod metrics)"
+          Write-Host "  - Synthetic Monitoring (Uptime/SSL)"
+          Write-Host "  - Logs Explorer (All namespaces)"
