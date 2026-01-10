@@ -143,37 +143,8 @@ jobs:
           Write-Host ""
 
       # ========================================================================
-      # MONITORING STACK DEPLOYMENT (Optional - continues on error)
+      # MONITORING STACK DEPLOYMENT
       # ========================================================================
-      - name: Add Helm Repositories
-        continue-on-error: true
-        run: |
-          $ErrorActionPreference = "Continue"
-          
-          Write-Host "Adding Helm repositories..." -ForegroundColor Cyan
-          
-          # Try to add prometheus-community repo
-          $promResult = helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "[OK] prometheus-community repo added" -ForegroundColor Green
-          } else {
-            Write-Host "[WARN] prometheus-community repo failed: $promResult" -ForegroundColor Yellow
-          }
-          
-          # Try to add grafana repo
-          $grafanaResult = helm repo add grafana https://grafana.github.io/helm-charts --force-update 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "[OK] grafana repo added" -ForegroundColor Green
-          } else {
-            Write-Host "[WARN] grafana repo failed: $grafanaResult" -ForegroundColor Yellow
-          }
-          
-          # Try to update repos
-          helm repo update 2>&1
-          
-          Write-Host "[INFO] Helm repo setup complete (errors are non-fatal)" -ForegroundColor Cyan
-          exit 0
-
       - name: Create Monitoring Namespace
         run: |
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
@@ -223,113 +194,56 @@ jobs:
           del grafana-cert.conf grafana-tls.key grafana-tls.crt 2>nul
           echo [OK] Grafana TLS certificate created
 
-      - name: Check Helm Repos and Deploy Monitoring
-        continue-on-error: true
+      - name: Deploy Complete Monitoring Stack
         run: |
-          $ErrorActionPreference = "Continue"
+          Write-Host "Deploying complete monitoring stack..." -ForegroundColor Cyan
           
-          # Check if Helm repos are available
-          $reposAvailable = $false
-          $repoList = helm repo list 2>&1
-          if ($repoList -match "prometheus-community" -and $repoList -match "grafana") {
-            $reposAvailable = $true
-            Write-Host "[OK] Helm repos available - deploying monitoring stack" -ForegroundColor Green
-          } else {
-            Write-Host "[SKIP] Helm repos not available - skipping Tempo/Loki/Prometheus deployment" -ForegroundColor Yellow
-            Write-Host "       Run manually when network is available:" -ForegroundColor Yellow
-            Write-Host "       .\monitoring\deploy-monitoring.ps1" -ForegroundColor White
+          # Deploy core monitoring (Prometheus, Grafana with GitHub secrets, Blackbox)
+          kubectl apply -f monitoring/complete-monitoring-stack.yaml
+          Write-Host "[OK] Core monitoring deployed (Prometheus, Grafana, Blackbox)" -ForegroundColor Green
+          
+          # Wait for Prometheus
+          kubectl wait --for=condition=ready pod -l app=prometheus -n monitoring --timeout=2m
+          Write-Host "[OK] Prometheus ready" -ForegroundColor Green
+          
+          # Deploy Loki (Logs)
+          Write-Host "Deploying Loki for log aggregation..." -ForegroundColor Cyan
+          kubectl apply -f monitoring/loki-standalone.yaml
+          Write-Host "[OK] Loki deployed" -ForegroundColor Green
+          
+          # Deploy Tempo (Traces)
+          Write-Host "Deploying Tempo for distributed tracing..." -ForegroundColor Cyan
+          kubectl apply -f monitoring/tempo-standalone.yaml
+          Write-Host "[OK] Tempo deployed" -ForegroundColor Green
+          
+          # Deploy RUM collector
+          Write-Host "Deploying Faro RUM collector..." -ForegroundColor Cyan
+          kubectl apply -f monitoring/faro-rum-standalone.yaml
+          Write-Host "[OK] Faro RUM collector deployed" -ForegroundColor Green
+          
+          # Restart Grafana to pick up new datasources
+          Start-Sleep -Seconds 10
+          kubectl rollout restart deployment/grafana -n monitoring
+          kubectl rollout status deployment/grafana -n monitoring --timeout=2m
+          Write-Host "[OK] Grafana restarted with all datasources" -ForegroundColor Green
+
+      - name: Verify Monitoring Stack
+        run: |
+          Write-Host ""
+          Write-Host "Verifying monitoring components..." -ForegroundColor Cyan
+          
+          $components = @("prometheus", "grafana", "blackbox-exporter", "loki", "tempo", "promtail", "faro-collector")
+          foreach ($component in $components) {
+            $podCount = (kubectl get pods -n monitoring -l app=$component --no-headers 2>$null | Measure-Object).Count
+            if ($podCount -gt 0) {
+              Write-Host "  ✓ $component - Running" -ForegroundColor Green
+            } else {
+              Write-Host "  ⚠ $component - Not found" -ForegroundColor Yellow
+            }
           }
           
-          if ($reposAvailable) {
-            # Deploy Tempo
-            Write-Host "Deploying Tempo..." -ForegroundColor Cyan
-            helm upgrade --install tempo grafana/tempo --namespace monitoring --values monitoring/tempo-values.yaml --wait --timeout 5m0s 2>&1
-            
-            # Deploy Loki
-            Write-Host "Deploying Loki..." -ForegroundColor Cyan
-            helm upgrade --install loki grafana/loki-stack --namespace monitoring --values monitoring/loki-values.yaml --wait --timeout 5m0s 2>&1
-            
-            # Deploy Prometheus + Grafana
-            $grafanaPass = if ($env:GRAFANA_ADMIN_PASSWORD) { $env:GRAFANA_ADMIN_PASSWORD } else { "admin123" }
-            Write-Host "Deploying Prometheus + Grafana..." -ForegroundColor Cyan
-            helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack `
-              --namespace monitoring `
-              --values monitoring/kube-prometheus-stack-values.yaml `
-              --set grafana.adminPassword=$grafanaPass `
-              --wait --timeout 10m0s 2>&1
-            
-            Write-Host "[OK] Monitoring stack deployed" -ForegroundColor Green
-          }
-          exit 0
-        env:
-          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
-
-      - name: Deploy Synthetic Monitoring (Basic)
-        run: |
-          # Use basic version that doesn't require CRDs
-          kubectl apply -f monitoring/synthetic-monitoring-basic.yaml -n monitoring
-          Write-Host "[OK] Blackbox exporter deployed" -ForegroundColor Green
-
-      - name: Import Grafana Dashboards
-        continue-on-error: true
-        run: |
-          kubectl create configmap github-gists-api-dashboard `
-            --from-file=github-gists-api.json=monitoring/grafana-complete-dashboard.json `
-            --namespace monitoring `
-            --dry-run=client -o yaml | kubectl apply -f -
-          kubectl label configmap github-gists-api-dashboard grafana_dashboard=1 -n monitoring --overwrite
-          Write-Host "[OK] Grafana dashboards imported" -ForegroundColor Green
-
-      - name: Configure Grafana Istio Gateway
-        shell: cmd
-        run: |
-          echo apiVersion: networking.istio.io/v1beta1 > grafana-gateway.yaml
-          echo kind: Gateway >> grafana-gateway.yaml
-          echo metadata: >> grafana-gateway.yaml
-          echo   name: grafana-gateway >> grafana-gateway.yaml
-          echo   namespace: monitoring >> grafana-gateway.yaml
-          echo spec: >> grafana-gateway.yaml
-          echo   selector: >> grafana-gateway.yaml
-          echo     istio: ingressgateway >> grafana-gateway.yaml
-          echo   servers: >> grafana-gateway.yaml
-          echo   - port: >> grafana-gateway.yaml
-          echo       number: 80 >> grafana-gateway.yaml
-          echo       name: http >> grafana-gateway.yaml
-          echo       protocol: HTTP >> grafana-gateway.yaml
-          echo     hosts: >> grafana-gateway.yaml
-          echo     - "kishoregrafana.local" >> grafana-gateway.yaml
-          echo   - port: >> grafana-gateway.yaml
-          echo       number: 443 >> grafana-gateway.yaml
-          echo       name: https >> grafana-gateway.yaml
-          echo       protocol: HTTPS >> grafana-gateway.yaml
-          echo     tls: >> grafana-gateway.yaml
-          echo       mode: SIMPLE >> grafana-gateway.yaml
-          echo       credentialName: grafana-tls-secret >> grafana-gateway.yaml
-          echo     hosts: >> grafana-gateway.yaml
-          echo     - "kishoregrafana.local" >> grafana-gateway.yaml
-          echo --- >> grafana-gateway.yaml
-          echo apiVersion: networking.istio.io/v1beta1 >> grafana-gateway.yaml
-          echo kind: VirtualService >> grafana-gateway.yaml
-          echo metadata: >> grafana-gateway.yaml
-          echo   name: grafana-vs >> grafana-gateway.yaml
-          echo   namespace: monitoring >> grafana-gateway.yaml
-          echo spec: >> grafana-gateway.yaml
-          echo   hosts: >> grafana-gateway.yaml
-          echo   - "kishoregrafana.local" >> grafana-gateway.yaml
-          echo   gateways: >> grafana-gateway.yaml
-          echo   - grafana-gateway >> grafana-gateway.yaml
-          echo   http: >> grafana-gateway.yaml
-          echo   - match: >> grafana-gateway.yaml
-          echo     - uri: >> grafana-gateway.yaml
-          echo         prefix: / >> grafana-gateway.yaml
-          echo     route: >> grafana-gateway.yaml
-          echo     - destination: >> grafana-gateway.yaml
-          echo         host: kube-prometheus-stack-grafana.monitoring.svc.cluster.local >> grafana-gateway.yaml
-          echo         port: >> grafana-gateway.yaml
-          echo           number: 80 >> grafana-gateway.yaml
-          kubectl apply -f grafana-gateway.yaml
-          del grafana-gateway.yaml
-          echo [OK] Grafana Istio Gateway configured
+          Write-Host ""
+          Write-Host "[OK] Monitoring stack verification complete" -ForegroundColor Green
 
       - name: Display Monitoring Access Info
         run: |
@@ -362,3 +276,27 @@ jobs:
           Write-Host "  - Blackbox Exporter (Synthetic)"
           Write-Host ""
 
+  $ingressIP    rum.kishore.local"
+          Write-Host ""
+          Write-Host "Grafana Access (HTTPS with self-signed cert):"
+          Write-Host "  URL:      https://kishoregrafana.local"
+          Write-Host "  User:     From GRAFANA_ADMIN_USER secret (or 'admin')"
+          Write-Host "  Password: From GRAFANA_ADMIN_PASSWORD secret (or 'admin123')"
+          Write-Host ""
+          Write-Host "API Access:"
+          Write-Host "  https://gists.kishore.local/health"
+          Write-Host "  https://gists.kishore.local/{username}"
+          Write-Host ""
+          Write-Host "Monitoring Components (All Deployed):"
+          Write-Host "  ✓ Prometheus (Metrics) - http://prometheus:9090"
+          Write-Host "  ✓ Grafana (Visualization) - https://kishoregrafana.local"
+          Write-Host "  ✓ Loki (Logs) - http://loki:3100"
+          Write-Host "  ✓ Tempo (Traces) - http://tempo:3200"
+          Write-Host "  ✓ Blackbox Exporter (Synthetic Monitoring)"
+          Write-Host "  ✓ Faro RUM Collector - https://rum.kishore.local/collect"
+          Write-Host ""
+          Write-Host "Datasources in Grafana:"
+          Write-Host "  - Prometheus (Default)"
+          Write-Host "  - Loki (Logs)"
+          Write-Host "  - Tempo (Traces)"
+          Write-Host "  - Blackbox
