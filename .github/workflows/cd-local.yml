@@ -139,11 +139,39 @@ jobs:
       
       - name: Wait for ingress to be ready
         run: |
-          Write-Host "Waiting for ingress to configure load balancer..."
-          Start-Sleep -Seconds 10
+          Write-Host "Waiting for ingress controller and backends to be ready..." -ForegroundColor Yellow
+          Write-Host ""
           
-          # Verify ingress backend
+          # Wait for ingress controller pods
+          kubectl wait --namespace ingress-nginx `
+            --for=condition=ready pod `
+            --selector=app.kubernetes.io/component=controller `
+            --timeout=60s
+          
+          Write-Host "✅ Ingress controller is ready" -ForegroundColor Green
+          Write-Host ""
+          
+          # Wait for application pods
+          kubectl wait --namespace ${{ env.NAMESPACE }} `
+            --for=condition=ready pod `
+            --selector=app=github-gists-api `
+            --timeout=60s
+          
+          Write-Host "✅ Application pods are ready" -ForegroundColor Green
+          Write-Host ""
+          
+          # Additional wait for ingress routing to stabilize
+          Write-Host "Waiting for ingress routing to stabilize..."
+          Start-Sleep -Seconds 15
+          
+          # Show ingress details
+          Write-Host ""
+          Write-Host "Ingress details:" -ForegroundColor Cyan
           kubectl describe ingress github-gists-api -n ${{ env.NAMESPACE }}
+          
+          Write-Host ""
+          Write-Host "Ingress controller service:" -ForegroundColor Cyan
+          kubectl get svc -n ingress-nginx
       
       - name: Test API via Ingress (Production-grade)
         run: |
@@ -153,21 +181,53 @@ jobs:
           Write-Host "========================================" -ForegroundColor Cyan
           Write-Host ""
           
+          # Check if DNS is configured
+          $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
+          $dnsConfigured = (Get-Content $hostsFile | Select-String -Pattern "gists.local") -ne $null
+          
+          if ($dnsConfigured) {
+            Write-Host "✅ DNS configured for gists.local" -ForegroundColor Green
+            $baseUrl = "http://gists.local"
+          } else {
+            Write-Host "⚠️  DNS not configured, using localhost with Host header" -ForegroundColor Yellow
+            $baseUrl = "http://localhost"
+          }
+          
+          Write-Host ""
+          
           # Test health endpoint
-          Write-Host "Testing: http://gists.local/health"
+          Write-Host "Testing: $baseUrl/health"
           try {
-            $health = Invoke-RestMethod -Uri "http://gists.local/health" -TimeoutSec 10
+            if ($dnsConfigured) {
+              $health = Invoke-RestMethod -Uri "$baseUrl/health" -TimeoutSec 10
+            } else {
+              $health = Invoke-RestMethod -Uri "$baseUrl/health" -Headers @{ Host = "gists.local" } -TimeoutSec 10
+            }
             Write-Host "✅ Health check: $($health.status)" -ForegroundColor Green
           } catch {
             Write-Host "❌ Health check failed: $_" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "Troubleshooting information:" -ForegroundColor Yellow
+            Write-Host "1. Check ingress controller logs:"
+            Write-Host "   kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=50"
+            Write-Host ""
+            Write-Host "2. Check application logs:"
+            Write-Host "   kubectl logs -n ${{ env.NAMESPACE }} -l app=github-gists-api --tail=50"
+            Write-Host ""
+            Write-Host "3. Verify ingress backend:"
+            Write-Host "   kubectl describe ingress github-gists-api -n ${{ env.NAMESPACE }}"
             exit 1
           }
           
           # Test metrics endpoint
           Write-Host ""
-          Write-Host "Testing: http://gists.local/metrics"
+          Write-Host "Testing: $baseUrl/metrics"
           try {
-            $metrics = Invoke-WebRequest -Uri "http://gists.local/metrics" -UseBasicParsing -TimeoutSec 10
+            if ($dnsConfigured) {
+              $metrics = Invoke-WebRequest -Uri "$baseUrl/metrics" -UseBasicParsing -TimeoutSec 10
+            } else {
+              $metrics = Invoke-WebRequest -Uri "$baseUrl/metrics" -Headers @{ Host = "gists.local" } -UseBasicParsing -TimeoutSec 10
+            }
             if ($metrics.Content -like "*http_requests_total*") {
               Write-Host "✅ Metrics endpoint working" -ForegroundColor Green
             }
@@ -178,9 +238,13 @@ jobs:
           
           # Test gists endpoint
           Write-Host ""
-          Write-Host "Testing: http://gists.local/octocat"
+          Write-Host "Testing: $baseUrl/octocat"
           try {
-            $gists = Invoke-RestMethod -Uri "http://gists.local/octocat" -TimeoutSec 10
+            if ($dnsConfigured) {
+              $gists = Invoke-RestMethod -Uri "$baseUrl/octocat" -TimeoutSec 10
+            } else {
+              $gists = Invoke-RestMethod -Uri "$baseUrl/octocat" -Headers @{ Host = "gists.local" } -TimeoutSec 10
+            }
             Write-Host "✅ Found $($gists.Count) gists for octocat" -ForegroundColor Green
           } catch {
             Write-Host "❌ Gists endpoint failed: $_" -ForegroundColor Red
