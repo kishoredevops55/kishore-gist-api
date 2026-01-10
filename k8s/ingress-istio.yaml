@@ -1,0 +1,100 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: github-gists-api-istio
+  namespace: production
+  annotations:
+    # Istio Gateway configuration
+    kubernetes.io/ingress.class: "istio"
+  labels:
+    app: github-gists-api
+spec:
+  rules:
+  - host: gists-api.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: github-gists-api
+            port:
+              number: 80
+
+---
+# Alternative: Istio Gateway + VirtualService (recommended for Istio)
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: github-gists-gateway
+  namespace: production
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: gists-api-tls
+    hosts:
+    - gists-api.example.com
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - gists-api.example.com
+    tls:
+      httpsRedirect: true
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: github-gists-api
+  namespace: production
+spec:
+  hosts:
+  - gists-api.example.com
+  gateways:
+  - github-gists-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: github-gists-api.production.svc.cluster.local
+        port:
+          number: 80
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: github-gists-api
+  namespace: production
+spec:
+  host: github-gists-api.production.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+    loadBalancer:
+      simple: LEAST_CONN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50

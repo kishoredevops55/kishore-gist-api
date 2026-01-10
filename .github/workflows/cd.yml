@@ -1,0 +1,53 @@
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+      
+      - name: Set K8s context
+        run: |
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig.yml
+          export KUBECONFIG=kubeconfig.yml
+          kubectl config use-context production
+      
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+      
+      - name: Render Helm template
+        run: |
+          helm template github-gists-api ./helm \
+            --set image.tag=${{ github.sha }} \
+            --set image.repository=ghcr.io/${{ github.repository }} \
+            --namespace production \
+            --values ./helm/values-prod.yaml > rendered-manifest.yaml
+      
+      - name: Show diff
+        run: |
+          kubectl diff -f rendered-manifest.yaml || true
+      
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f rendered-manifest.yaml
+          kubectl rollout status deployment/github-gists-api -n production --timeout=5m
+      
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n production -l app=github-gists-api
+          kubectl get svc -n production -l app=github-gists-api
