@@ -12,7 +12,6 @@ jobs:
       CONTEXT_NAME: kind-kind-dev
       IMAGE_NAME: github-gists-api:latest
       NAMESPACE: production
-      INGRESS_HOST: gists.127.0.0.1.nip.io
     
     steps:
       - uses: actions/checkout@v4
@@ -22,16 +21,24 @@ jobs:
           # kubectl should already be available via Docker Desktop
           kubectl version --client
 
-      - name: Ensure Kind cluster exists (kind-dev)
+      - name: Ensure Kind cluster exists with ingress port mappings
         run: |
           $clusters = kind get clusters 2>$null
           if ($clusters -notcontains "${{ env.CLUSTER_NAME }}") {
-            Write-Host "Creating kind cluster ${{ env.CLUSTER_NAME }}..."
+            Write-Host "Creating kind cluster ${{ env.CLUSTER_NAME }} with ingress support..."
+            
+            # Create cluster config with port mappings for ingress
             @"
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
   extraPortMappings:
   - containerPort: 80
     hostPort: 80
@@ -39,15 +46,38 @@ nodes:
   - containerPort: 443
     hostPort: 443
     protocol: TCP
-"@ | kind create cluster --name ${{ env.CLUSTER_NAME }} --config=-
+"@ | kind create cluster --name ${{ env.CLUSTER_NAME }} --config -
+            
+            Write-Host "✅ Kind cluster created with ingress port mappings"
           } else {
-            Write-Host "Kind cluster ${{ env.CLUSTER_NAME }} already exists"
+            Write-Host "✅ Kind cluster ${{ env.CLUSTER_NAME }} already exists"
           }
       
       - name: Configure Kind cluster context (kind-dev)
         run: |
           kubectl config use-context ${{ env.CONTEXT_NAME }}
           kubectl cluster-info
+      
+      - name: Install ingress-nginx controller
+        run: |
+          # Check if ingress-nginx namespace exists
+          $ingressNs = kubectl get namespace ingress-nginx --ignore-not-found=true
+          if ([string]::IsNullOrEmpty($ingressNs)) {
+            Write-Host "Installing ingress-nginx controller..."
+            kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+            
+            Write-Host "Waiting for ingress-nginx controller to be ready..."
+            kubectl wait --namespace ingress-nginx `
+              --for=condition=ready pod `
+              --selector=app.kubernetes.io/component=controller `
+              --timeout=180s
+            
+            Write-Host "✅ Ingress-nginx controller installed and ready"
+          } else {
+            Write-Host "✅ Ingress-nginx controller already installed"
+            # Verify it's running
+            kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller
+          }
 
       - name: Build local image
         run: |
@@ -56,13 +86,6 @@ nodes:
       - name: Create namespace if not exists
         run: |
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Install ingress-nginx (kind)
-        run: |
-          if (-not (kubectl get ns ingress-nginx -o name 2>$null)) {
-            kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-          }
-          kubectl wait --namespace ingress-nginx --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=180s
       
       - name: Load local image into Kind cluster (kind-dev)
         run: |
@@ -82,30 +105,86 @@ nodes:
         run: |
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/servicemonitor.yaml
+          kubectl apply -f k8s/ingress-nginx.yaml
           kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=3m
-
-      - name: Publish ingress (local hostname)
-        run: |
-          kubectl apply -f k8s/ingress-local.yaml
       
       - name: Verify deployment
         run: |
           kubectl get pods -n ${{ env.NAMESPACE }} -l app=github-gists-api
-          kubectl get svc -n ${{ env.NAMESPACE }} -l app=github-gists-api
+          kubectl get ingress -n ${{ env.NAMESPACE }}
       
-      - name: Port forward and test
+      - name: Configure local DNS (Windows hosts file)
         run: |
-          Start-Job -ScriptBlock {
-            kubectl port-forward -n ${{ env.NAMESPACE }} svc/github-gists-api 8080:80
+          $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
+          $dnsEntry = "127.0.0.1 gists.local"
+          
+          # Check if entry already exists
+          $existingEntry = Get-Content $hostsFile | Select-String -Pattern "gists.local"
+          
+          if (-not $existingEntry) {
+            Write-Host "Adding DNS entry to hosts file..."
+            Add-Content -Path $hostsFile -Value "`n$dnsEntry" -Force
+            Write-Host "✅ Added: $dnsEntry"
+          } else {
+            Write-Host "✅ DNS entry already exists: $existingEntry"
           }
-          Start-Sleep -Seconds 5
+      
+      - name: Wait for ingress to be ready
+        run: |
+          Write-Host "Waiting for ingress to configure load balancer..."
+          Start-Sleep -Seconds 10
+          
+          # Verify ingress backend
+          kubectl describe ingress github-gists-api -n ${{ env.NAMESPACE }}
+      
+      - name: Test API via Ingress (Production-grade)
+        run: |
+          Write-Host ""
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "Testing API via Ingress Load Balancer" -ForegroundColor Cyan
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host ""
           
           # Test health endpoint
-          $response = Invoke-RestMethod http://localhost:8080/health
-          Write-Host "Health check: $($response.status)"
+          Write-Host "Testing: http://gists.local/health"
+          try {
+            $health = Invoke-RestMethod -Uri "http://gists.local/health" -TimeoutSec 10
+            Write-Host "✅ Health check: $($health.status)" -ForegroundColor Green
+          } catch {
+            Write-Host "❌ Health check failed: $_" -ForegroundColor Red
+            exit 1
+          }
           
           # Test metrics endpoint
-          $metrics = Invoke-WebRequest http://localhost:8080/metrics
-          Write-Host "Metrics endpoint: Available"
+          Write-Host ""
+          Write-Host "Testing: http://gists.local/metrics"
+          try {
+            $metrics = Invoke-WebRequest -Uri "http://gists.local/metrics" -UseBasicParsing -TimeoutSec 10
+            if ($metrics.Content -like "*http_requests_total*") {
+              Write-Host "✅ Metrics endpoint working" -ForegroundColor Green
+            }
+          } catch {
+            Write-Host "❌ Metrics check failed: $_" -ForegroundColor Red
+            exit 1
+          }
           
+          # Test gists endpoint
+          Write-Host ""
+          Write-Host "Testing: http://gists.local/octocat"
+          try {
+            $gists = Invoke-RestMethod -Uri "http://gists.local/octocat" -TimeoutSec 10
+            Write-Host "✅ Found $($gists.Count) gists for octocat" -ForegroundColor Green
+          } catch {
+            Write-Host "❌ Gists endpoint failed: $_" -ForegroundColor Red
+            exit 1
+          }
+          
+          Write-Host ""
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "🎉 All API tests passed!" -ForegroundColor Green
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host ""
+          Write-Host "Access your API at: http://gists.local/<username>" -ForegroundColor Yellow
+          Write-Host "Example: http://gists.local/octocat" -ForegroundColor Yellow
+          Write-Host ""
           Stop-Job -Name *

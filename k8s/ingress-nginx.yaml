@@ -1,9 +1,6 @@
-# DEPRECATED: Ingress NGINX controller EOL March 2026
-# Migration to Gateway API (gateway-api.yaml) is recommended
-# See: https://kubernetes.io/blog/2024/11/25/nginx-ingress-retirement/
-#
-# This file is provided for legacy reference only.
-# For production deployments, use Gateway API instead.
+# Production-grade ingress for local development with Kind
+# Uses nginx ingress controller for load balancing
+# Access via: http://gists.local/<username>
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -11,25 +8,18 @@ metadata:
   name: github-gists-api
   namespace: production
   annotations:
-    # NGINX Ingress Controller
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/rate-limit: "100"
-    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
   labels:
     app: github-gists-api
 spec:
   ingressClassName: nginx
-  tls:
-  - hosts:
-    - gists-api.example.com
-    secretName: gists-api-tls
   rules:
-  - host: gists-api.example.com
+  - host: gists.local
     http:
       paths:
       - path: /
