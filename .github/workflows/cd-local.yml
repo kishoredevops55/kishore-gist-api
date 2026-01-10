@@ -1,540 +1,150 @@
 name: CD Pipeline (Local Kind Cluster)
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  workflow_dispatch:
 
 jobs:
   deploy-to-kind:
-    runs-on: [self-hosted, Windows, X64]  # Match your runner labels
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, Windows, X64]
     env:
       CLUSTER_NAME: kind-dev
       CONTEXT_NAME: kind-kind-dev
       IMAGE_NAME: github-gists-api:latest
       NAMESPACE: production
       CUSTOM_DNS: gists.kishore.local
-      ISTIO_VERSION: "1.23.4"
     
     steps:
       - uses: actions/checkout@v4
       
-      - name: Set up kubectl
-        run: |
-          # kubectl should already be available via Docker Desktop
-          kubectl version --client
-
-      - name: Ensure Kind cluster exists with ingress port mappings
-        run: |
-          $clusters = kind get clusters 2>$null
-          if ($clusters -notcontains "${{ env.CLUSTER_NAME }}") {
-            Write-Host "Creating kind cluster ${{ env.CLUSTER_NAME }} with ingress support..."
-            
-            # Create temporary kind config file
-            $kindConfig = @'
-          kind: Cluster
-          apiVersion: kind.x-k8s.io/v1alpha4
-          nodes:
-          - role: control-plane
-            kubeadmConfigPatches:
-            - |
-              kind: InitConfiguration
-              nodeRegistration:
-                kubeletExtraArgs:
-                  node-labels: "ingress-ready=true"
-            extraPortMappings:
-            - containerPort: 80
-              hostPort: 80
-              protocol: TCP
-            - containerPort: 443
-              hostPort: 443
-              protocol: TCP
-          '@
-            
-            $kindConfig | Out-File -FilePath kind-config.yaml -Encoding utf8
-            kind create cluster --name ${{ env.CLUSTER_NAME }} --config kind-config.yaml
-            Remove-Item kind-config.yaml
-            
-            Write-Host "✅ Kind cluster created with ingress port mappings"
-          } else {
-            Write-Host "✅ Kind cluster ${{ env.CLUSTER_NAME }} already exists"
-          }
-      
-      - name: Configure Kind cluster context (kind-dev)
+      - name: Setup cluster context
         run: |
           kubectl config use-context ${{ env.CONTEXT_NAME }}
-          kubectl cluster-info
-      
-      - name: Install Istio Service Mesh
-        run: |
-          # Check if Istio is already installed and running
-          $istiodPod = kubectl get pods -n istio-system -l app=istiod --ignore-not-found=true 2>$null
-          if ([string]::IsNullOrEmpty($istiodPod) -or $istiodPod -notlike "*Running*") {
-            Write-Host "Installing Istio ${{ env.ISTIO_VERSION }}..." -ForegroundColor Yellow
-            
-            # Create istio-system namespace if not exists
-            kubectl create namespace istio-system --dry-run=client -o yaml | kubectl apply -f -
-            
-            # Download istioctl
-            $istioUrl = "https://github.com/istio/istio/releases/download/${{ env.ISTIO_VERSION }}/istioctl-${{ env.ISTIO_VERSION }}-win-amd64.zip"
-            Write-Host "Downloading from: $istioUrl"
-            Invoke-WebRequest -Uri $istioUrl -OutFile istioctl.zip -UseBasicParsing
-            Expand-Archive -Path istioctl.zip -DestinationPath . -Force
-            
-            # Verify istioctl exists
-            if (Test-Path ".\istioctl.exe") {
-              Write-Host "✅ istioctl downloaded successfully"
-            } else {
-              Write-Host "❌ istioctl not found after extraction" -ForegroundColor Red
-              Get-ChildItem -Recurse | Where-Object { $_.Name -like "istioctl*" }
-              exit 1
-            }
-            
-            # Install Istio with demo profile (includes ingress gateway)
-            # Use cmd to avoid PowerShell treating ASCII art as error
-            Write-Host "Running istioctl install..."
-            $ErrorActionPreference = "Continue"
-            & cmd /c ".\istioctl.exe install --set profile=demo -y"
-            $ErrorActionPreference = "Stop"
-            
-            # Wait for namespace to be created
-            Start-Sleep -Seconds 10
-            
-            Write-Host "Waiting for Istio components to be ready..."
-            $retries = 0
-            $maxRetries = 12
-            while ($retries -lt $maxRetries) {
-              $istiodReady = kubectl get pods -n istio-system -l app=istiod -o jsonpath="{.items[*].status.phase}" 2>$null
-              if ($istiodReady -eq "Running") {
-                Write-Host "✅ Istiod is running" -ForegroundColor Green
-                break
-              }
-              Write-Host "Waiting for Istiod... (attempt $($retries + 1)/$maxRetries)"
-              kubectl get pods -n istio-system 2>$null
-              Start-Sleep -Seconds 10
-              $retries++
-            }
-            
-            # Check ingress gateway
-            $retries = 0
-            while ($retries -lt $maxRetries) {
-              $gatewayReady = kubectl get pods -n istio-system -l app=istio-ingressgateway -o jsonpath="{.items[*].status.phase}" 2>$null
-              if ($gatewayReady -eq "Running") {
-                Write-Host "✅ Istio Ingress Gateway is running" -ForegroundColor Green
-                break
-              }
-              Write-Host "Waiting for Istio Ingress Gateway... (attempt $($retries + 1)/$maxRetries)"
-              Start-Sleep -Seconds 10
-              $retries++
-            }
-            
-            Write-Host ""
-            Write-Host "Istio pods status:" -ForegroundColor Cyan
-            kubectl get pods -n istio-system
-            
-          } else {
-            Write-Host "✅ Istio already installed and running" -ForegroundColor Green
-            kubectl get pods -n istio-system
-          }
-          
-          # Ensure production namespace exists before labeling
-          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-          
-          # Enable sidecar injection for production namespace
-          kubectl label namespace ${{ env.NAMESPACE }} istio-injection=enabled --overwrite
-          Write-Host "✅ Istio sidecar injection enabled for ${{ env.NAMESPACE }}" -ForegroundColor Green
-      
-      - name: Generate TLS Certificate for HTTPS
-        continue-on-error: true
-        run: |
-          Write-Host "Generating self-signed TLS certificate for ${{ env.CUSTOM_DNS }}..." -ForegroundColor Yellow
-          
-          # Check if secret already exists
-          $tlsSecret = kubectl get secret gists-tls-secret -n istio-system --ignore-not-found=true
-          if ([string]::IsNullOrEmpty($tlsSecret)) {
-            # Use OpenSSL from Git installation (Git for Windows includes OpenSSL)
-            $gitPath = "C:\Program Files\Git\usr\bin"
-            $opensslPath = "$gitPath\openssl.exe"
-            
-            if (Test-Path $opensslPath) {
-              Write-Host "Using OpenSSL from Git installation..."
-              
-              # Create OpenSSL config file
-              $configLines = @(
-                "[req]",
-                "distinguished_name = req_distinguished_name",
-                "x509_extensions = v3_req",
-                "prompt = no",
-                "[req_distinguished_name]",
-                "CN = ${{ env.CUSTOM_DNS }}",
-                "O = Kishore DevOps",
-                "[v3_req]",
-                "basicConstraints = CA:FALSE",
-                "keyUsage = critical, digitalSignature, keyEncipherment",
-                "extendedKeyUsage = serverAuth",
-                "subjectAltName = @alt_names",
-                "[alt_names]",
-                "DNS.1 = ${{ env.CUSTOM_DNS }}",
-                "DNS.2 = gists.local",
-                "DNS.3 = localhost"
-              )
-              $configLines | Out-File -FilePath openssl.cnf -Encoding ascii
-              
-              # Generate certificate and key
-              & $opensslPath req -x509 -nodes -days 365 -newkey rsa:2048 `
-                -keyout tls.key `
-                -out tls.crt `
-                -config openssl.cnf `
-                -extensions v3_req
-              
-              if ((Test-Path tls.crt) -and (Test-Path tls.key)) {
-                # Create TLS secret
-                kubectl create secret tls gists-tls-secret `
-                  --cert=tls.crt `
-                  --key=tls.key `
-                  -n istio-system
-                
-                Write-Host "✅ TLS certificate created for ${{ env.CUSTOM_DNS }}" -ForegroundColor Green
-              } else {
-                Write-Host "⚠️  Certificate generation failed, HTTPS may not work" -ForegroundColor Yellow
-              }
-              
-              # Cleanup
-              Remove-Item tls.key, tls.crt, openssl.cnf -ErrorAction SilentlyContinue
-            } else {
-              Write-Host "⚠️  OpenSSL not found, skipping TLS certificate generation" -ForegroundColor Yellow
-              Write-Host "   HTTPS via Istio will not be available" -ForegroundColor Yellow
-              Write-Host "   HTTP via NGINX Ingress will still work" -ForegroundColor Yellow
-            }
-          } else {
-            Write-Host "✅ TLS secret already exists" -ForegroundColor Green
-          }
-      
-      - name: Install ingress-nginx controller (fallback)
-        run: |
-          # Check if ingress-nginx namespace exists
-          $ingressNs = kubectl get namespace ingress-nginx --ignore-not-found=true
-          if ([string]::IsNullOrEmpty($ingressNs)) {
-            Write-Host "Installing ingress-nginx controller..."
-            kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-            
-            Write-Host "Waiting for ingress-nginx controller to be ready..."
-            kubectl wait --namespace ingress-nginx `
-              --for=condition=ready pod `
-              --selector=app.kubernetes.io/component=controller `
-              --timeout=180s
-            
-            Write-Host "✅ Ingress-nginx controller installed and ready"
-          } else {
-            Write-Host "✅ Ingress-nginx controller already installed"
-            kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller
-          }
+          Write-Host "✅ Context set" -ForegroundColor Green
 
-      - name: Build local image
+      - name: Build and load image
         run: |
           docker build -t ${{ env.IMAGE_NAME }} .
-      
-      - name: Create namespace if not exists
+          kind load docker-image ${{ env.IMAGE_NAME }} --name ${{ env.CLUSTER_NAME }}
+          Write-Host "✅ Image built and loaded" -ForegroundColor Green
+
+      - name: Deploy application
         run: |
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-      
-      - name: Load local image into Kind cluster (kind-dev)
-        run: |
-          # Load the locally built image into Kind (expects image tag github-gists-api:latest)
-          kind load docker-image ${{ env.IMAGE_NAME }} --name ${{ env.CLUSTER_NAME }}
-      
-      - name: Create DockerHub pull secret
-        run: |
-          kubectl create secret docker-registry dockerhub-secret `
-            --docker-server=https://index.docker.io/v1/ `
-            --docker-username=${{ secrets.DOCKERHUB_USERNAME }} `
-            --docker-password=${{ secrets.DOCKERHUB_TOKEN }} `
-            --namespace=${{ env.NAMESPACE }} `
-            --dry-run=client -o yaml | kubectl apply -f -
-      
-      - name: Deploy to Kind cluster
-        run: |
           kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/servicemonitor.yaml
           kubectl apply -f k8s/ingress-nginx.yaml
-          
-          # Deploy Istio Gateway and VirtualService
-          Write-Host "Deploying Istio Gateway configuration..." -ForegroundColor Yellow
-          kubectl apply -f k8s/istio-gateway.yaml
-          
-          Write-Host "Waiting for deployment rollout..."
-          kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=3m
-          
-          # Restart pods to inject Istio sidecar
-          Write-Host "Restarting pods to inject Istio sidecar..." -ForegroundColor Yellow
-          kubectl rollout restart deployment/github-gists-api -n ${{ env.NAMESPACE }}
-          kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=3m
-      
-      - name: Verify deployment
+          kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=2m
+          Write-Host "✅ Application deployed" -ForegroundColor Green
+
+      - name: Setup MetalLB for LoadBalancer IP
         run: |
-          Write-Host "=== Deployment Status ===" -ForegroundColor Cyan
-          kubectl get pods -n ${{ env.NAMESPACE }} -l app=github-gists-api
-          
-          Write-Host ""
-          Write-Host "=== Istio Sidecar Status ===" -ForegroundColor Cyan
-          kubectl get pods -n ${{ env.NAMESPACE }} -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[*].name}{"\n"}{end}'
-          
-          Write-Host ""
-          Write-Host "=== Ingress Resources ===" -ForegroundColor Cyan
-          kubectl get ingress -n ${{ env.NAMESPACE }}
-          
-          Write-Host ""
-          Write-Host "=== Istio Gateway ===" -ForegroundColor Cyan
-          kubectl get gateway,virtualservice -n ${{ env.NAMESPACE }}
-          
-          Write-Host ""
-          Write-Host "=== Istio Ingress Gateway Service ===" -ForegroundColor Cyan
-          kubectl get svc istio-ingressgateway -n istio-system
-      
-      - name: Configure local DNS (Windows hosts file)
-        continue-on-error: true
-        run: |
-          $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
-          $dnsEntries = @(
-            "127.0.0.1 gists.local",
-            "127.0.0.1 ${{ env.CUSTOM_DNS }}"
-          )
-          
-          foreach ($entry in $dnsEntries) {
-            $hostname = $entry.Split(" ")[1]
-            $existingEntry = Get-Content $hostsFile | Select-String -Pattern $hostname
+          # Check if MetalLB already installed
+          $metallbNs = kubectl get namespace metallb-system --ignore-not-found=true 2>$null
+          if ([string]::IsNullOrEmpty($metallbNs)) {
+            Write-Host "Installing MetalLB..." -ForegroundColor Yellow
+            kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
             
-            if (-not $existingEntry) {
-              Write-Host "⚠️  DNS entry not found: $entry" -ForegroundColor Yellow
-            } else {
-              Write-Host "✅ DNS configured: $hostname" -ForegroundColor Green
-            }
+            # Wait for MetalLB pods
+            Start-Sleep -Seconds 10
+            kubectl wait --namespace metallb-system --for=condition=ready pod --selector=app=metallb --timeout=90s 2>$null
           }
           
-          Write-Host ""
-          Write-Host "To add DNS entries, run as Administrator:" -ForegroundColor Yellow
-          Write-Host "  Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value '127.0.0.1 ${{ env.CUSTOM_DNS }}'" -ForegroundColor Cyan
-      
-      - name: Wait for ingress and Test API
-        run: |
-          Write-Host "Waiting for ingress controller and backends to be ready..." -ForegroundColor Yellow
-          Write-Host ""
-          
-          # Wait for ingress controller pods
-          kubectl wait --namespace ingress-nginx `
-            --for=condition=ready pod `
-            --selector=app.kubernetes.io/component=controller `
-            --timeout=60s
-          
-          Write-Host "✅ Ingress controller is ready" -ForegroundColor Green
-          Write-Host ""
-          
-          # Wait for application pods
-          kubectl wait --namespace ${{ env.NAMESPACE }} `
-            --for=condition=ready pod `
-            --selector=app=github-gists-api `
-            --timeout=60s
-          
-          Write-Host "✅ Application pods are ready" -ForegroundColor Green
-          Write-Host ""
-          
-          # Setup port-forward to ingress controller (use 8080 to avoid admin requirement)
-          Write-Host "Setting up port-forward to ingress controller on port 8080..." -ForegroundColor Yellow
-          $ingressPod = kubectl get pod -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath="{.items[0].metadata.name}"
-          
-          # Start background job for port forward (8080->80)
-          $pfJob = Start-Job -ScriptBlock {
-            param($podName)
-            kubectl port-forward -n ingress-nginx pod/$podName 8080:80 2>&1
-          } -ArgumentList $ingressPod
-          
-          Write-Host "Waiting for port-forward to accept connections..."
-          Start-Sleep -Seconds 8
-          
-          # Verify port-forward is running
-          $jobState = Get-Job -Id $pfJob.Id
-          Write-Host "Port-forward job state: $($jobState.State)"
-          
-          # Show ingress details
-          Write-Host ""
-          Write-Host "Ingress details:" -ForegroundColor Cyan
-          kubectl describe ingress github-gists-api -n ${{ env.NAMESPACE }}
-          
-          Write-Host ""
-          Write-Host "========================================" -ForegroundColor Cyan
-          Write-Host "Testing API via Ingress Load Balancer" -ForegroundColor Cyan
-          Write-Host "========================================" -ForegroundColor Cyan
-          Write-Host ""
-          
-          $baseUrl = "http://localhost:8080"
-          
-          # Test health endpoint
-          Write-Host "Testing: $baseUrl/health"
-          try {
-            $health = Invoke-RestMethod -Uri "$baseUrl/health" -Headers @{ Host = "gists.local" } -TimeoutSec 15
-            Write-Host "✅ Health check: $($health.status)" -ForegroundColor Green
-          } catch {
-            Write-Host "❌ Health check failed: $_" -ForegroundColor Red
-            Write-Host ""
-            Write-Host "Port-forward job output:" -ForegroundColor Yellow
-            Receive-Job -Id $pfJob.Id
-            Write-Host ""
-            Write-Host "Troubleshooting:" -ForegroundColor Yellow
-            Write-Host "1. Ingress controller logs:"
-            kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=30
-            Write-Host ""
-            Write-Host "2. Application logs:"
-            kubectl logs -n ${{ env.NAMESPACE }} -l app=github-gists-api --tail=30
-            Stop-Job -Id $pfJob.Id -ErrorAction SilentlyContinue
-            Remove-Job -Id $pfJob.Id -Force -ErrorAction SilentlyContinue
-            exit 1
-          }
-          
-          # Test metrics endpoint
-          Write-Host ""
-          Write-Host "Testing: $baseUrl/metrics"
-          try {
-            $metrics = Invoke-WebRequest -Uri "$baseUrl/metrics" -Headers @{ Host = "gists.local" } -UseBasicParsing -TimeoutSec 15
-            if ($metrics.Content -like "*http_requests_total*") {
-              Write-Host "✅ Metrics endpoint working" -ForegroundColor Green
-            }
-          } catch {
-            Write-Host "❌ Metrics check failed: $_" -ForegroundColor Red
-            Stop-Job -Id $pfJob.Id -ErrorAction SilentlyContinue
-            Remove-Job -Id $pfJob.Id -Force -ErrorAction SilentlyContinue
-            exit 1
-          }
-          
-          # Test gists endpoint
-          Write-Host ""
-          Write-Host "Testing: $baseUrl/octocat"
-          try {
-            $gists = Invoke-RestMethod -Uri "$baseUrl/octocat" -Headers @{ Host = "gists.local" } -TimeoutSec 15
-            Write-Host "✅ Found $($gists.Count) gists for octocat" -ForegroundColor Green
-          } catch {
-            Write-Host "❌ Gists endpoint failed: $_" -ForegroundColor Red
-            Stop-Job -Id $pfJob.Id -ErrorAction SilentlyContinue
-            Remove-Job -Id $pfJob.Id -Force -ErrorAction SilentlyContinue
-            exit 1
-          }
-          
-          # Cleanup NGINX port-forward
-          Stop-Job -Id $pfJob.Id -ErrorAction SilentlyContinue
-          Remove-Job -Id $pfJob.Id -Force -ErrorAction SilentlyContinue
-          
-          Write-Host ""
-          Write-Host "========================================" -ForegroundColor Cyan
-          Write-Host "🎉 NGINX Ingress tests passed!" -ForegroundColor Green
-          Write-Host "========================================" -ForegroundColor Cyan
-      
-      - name: Test API via Istio Gateway (HTTPS)
-        run: |
-          Write-Host ""
-          Write-Host "========================================" -ForegroundColor Cyan
-          Write-Host "Testing API via Istio Gateway (HTTPS)" -ForegroundColor Cyan
-          Write-Host "========================================" -ForegroundColor Cyan
-          Write-Host ""
-          
-          # Wait for Istio ingress gateway
-          kubectl wait --namespace istio-system `
-            --for=condition=ready pod `
-            --selector=app=istio-ingressgateway `
-            --timeout=60s
-          
-          Write-Host "✅ Istio Ingress Gateway is ready" -ForegroundColor Green
-          Write-Host ""
-          
-          # Setup port-forward to Istio ingress gateway
-          Write-Host "Setting up port-forward to Istio Ingress Gateway..." -ForegroundColor Yellow
-          
-          # Port forward for HTTPS (8443->443) and HTTP (8080->80)
-          $istioHttpJob = Start-Job -ScriptBlock {
-            kubectl port-forward -n istio-system svc/istio-ingressgateway 8080:80 2>&1
-          }
-          
-          $istioHttpsJob = Start-Job -ScriptBlock {
-            kubectl port-forward -n istio-system svc/istio-ingressgateway 8443:443 2>&1
-          }
-          
-          Write-Host "Waiting for Istio port-forwards..."
-          Start-Sleep -Seconds 8
-          
-          # Test via Istio HTTP (redirects to HTTPS)
-          Write-Host ""
-          Write-Host "Testing HTTP redirect: http://localhost:8080/health" -ForegroundColor Yellow
-          try {
-            $response = Invoke-WebRequest -Uri "http://localhost:8080/health" `
-              -Headers @{ Host = "${{ env.CUSTOM_DNS }}" } `
-              -MaximumRedirection 0 `
-              -ErrorAction SilentlyContinue `
-              -UseBasicParsing
-          } catch {
-            if ($_.Exception.Response.StatusCode -eq 301 -or $_.Exception.Response.StatusCode -eq 308) {
-              Write-Host "✅ HTTP->HTTPS redirect working (Status: $($_.Exception.Response.StatusCode))" -ForegroundColor Green
-            } else {
-              Write-Host "⚠️  HTTP redirect check: $_" -ForegroundColor Yellow
-            }
-          }
-          
-          # Test via Istio HTTPS (skip cert validation for self-signed)
-          Write-Host ""
-          Write-Host "Testing HTTPS: https://localhost:8443/health" -ForegroundColor Yellow
-          try {
-            # Skip certificate validation for self-signed cert
-            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+          # Get Docker network subnet for Kind
+          $kindNetwork = docker network inspect kind --format "{{range .IPAM.Config}}{{.Subnet}}{{end}}" 2>$null
+          if ($kindNetwork) {
+            # Extract base IP (e.g., 172.18.0.0/16 -> 172.18)
+            $baseIP = ($kindNetwork -split '\.')[0..1] -join '.'
+            $ipRange = "$baseIP.255.200-$baseIP.255.250"
             
-            $health = Invoke-RestMethod -Uri "https://localhost:8443/health" `
-              -Headers @{ Host = "${{ env.CUSTOM_DNS }}" } `
-              -SkipCertificateCheck `
-              -TimeoutSec 15
-            Write-Host "✅ HTTPS Health check via Istio: $($health.status)" -ForegroundColor Green
-          } catch {
-            Write-Host "⚠️  HTTPS test (may fail with self-signed cert): $_" -ForegroundColor Yellow
-            Write-Host "This is expected - HTTPS with self-signed cert needs -SkipCertificateCheck" -ForegroundColor Yellow
+            Write-Host "Configuring MetalLB IP pool: $ipRange" -ForegroundColor Yellow
+            
+            # Apply MetalLB configuration
+            $metallbConfig = @"
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: kind-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - $ipRange
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: kind-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - kind-pool
+"@
+            $metallbConfig | kubectl apply -f -
+            Write-Host "✅ MetalLB configured" -ForegroundColor Green
           }
+
+      - name: Patch Ingress for LoadBalancer
+        run: |
+          # Patch ingress-nginx to LoadBalancer type
+          kubectl patch svc ingress-nginx-controller -n ingress-nginx -p '{"spec":{"type":"LoadBalancer"}}'
           
-          # Test gists via Istio
-          Write-Host ""
-          Write-Host "Testing: https://localhost:8443/octocat via Istio" -ForegroundColor Yellow
-          try {
-            $gists = Invoke-RestMethod -Uri "https://localhost:8443/octocat" `
-              -Headers @{ Host = "${{ env.CUSTOM_DNS }}" } `
-              -SkipCertificateCheck `
-              -TimeoutSec 15
-            Write-Host "✅ Found $($gists.Count) gists via Istio Gateway" -ForegroundColor Green
-          } catch {
-            Write-Host "⚠️  Istio HTTPS test: $_" -ForegroundColor Yellow
+          # Wait for external IP
+          $retries = 0
+          while ($retries -lt 12) {
+            $externalIP = kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
+            if ($externalIP) {
+              Write-Host "✅ LoadBalancer IP: $externalIP" -ForegroundColor Green
+              break
+            }
+            Write-Host "Waiting for LoadBalancer IP... ($retries/12)"
+            Start-Sleep -Seconds 5
+            $retries++
           }
+
+      - name: Test and display access URLs
+        run: |
+          # Get LoadBalancer IP
+          $LB_IP = kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
           
-          # Cleanup Istio port-forwards
-          Stop-Job -Id $istioHttpJob.Id -ErrorAction SilentlyContinue
-          Stop-Job -Id $istioHttpsJob.Id -ErrorAction SilentlyContinue
-          Remove-Job -Id $istioHttpJob.Id -Force -ErrorAction SilentlyContinue
-          Remove-Job -Id $istioHttpsJob.Id -Force -ErrorAction SilentlyContinue
-          
-          Write-Host ""
-          Write-Host "========================================" -ForegroundColor Cyan
-          Write-Host "🎉 All tests completed!" -ForegroundColor Green
-          Write-Host "========================================" -ForegroundColor Cyan
-          Write-Host ""
-          Write-Host "=== Access Methods ===" -ForegroundColor Cyan
-          Write-Host ""
-          Write-Host "1. Via NGINX Ingress (HTTP):" -ForegroundColor Yellow
-          Write-Host "   kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8080:80" -ForegroundColor White
-          Write-Host "   curl -H 'Host: gists.local' http://localhost:8080/octocat" -ForegroundColor White
-          Write-Host ""
-          Write-Host "2. Via Istio Gateway (HTTPS) - Enterprise Grade:" -ForegroundColor Yellow
-          Write-Host "   kubectl port-forward -n istio-system svc/istio-ingressgateway 8443:443" -ForegroundColor White
-          Write-Host "   curl -k -H 'Host: ${{ env.CUSTOM_DNS }}' https://localhost:8443/octocat" -ForegroundColor White
-          Write-Host ""
-          Write-Host "3. With DNS configured (add to hosts file):" -ForegroundColor Yellow
-          Write-Host "   127.0.0.1 ${{ env.CUSTOM_DNS }}" -ForegroundColor White
-          Write-Host "   https://${{ env.CUSTOM_DNS }}:8443/octocat" -ForegroundColor White
-          Write-Host ""
-          Write-Host "=== Istio Features Enabled ===" -ForegroundColor Cyan
-          Write-Host "  ✅ mTLS (Mutual TLS) between services" -ForegroundColor Green
-          Write-Host "  ✅ Load Balancing (Round Robin)" -ForegroundColor Green
-          Write-Host "  ✅ Circuit Breaker (Outlier Detection)" -ForegroundColor Green
-          Write-Host "  ✅ Retry Policy (3 attempts)" -ForegroundColor Green
-          Write-Host "  ✅ Timeout Management (30s)" -ForegroundColor Green
-          Write-Host "  ✅ HTTPS/TLS Termination" -ForegroundColor Green
-          Write-Host ""
+          if ($LB_IP) {
+            Write-Host ""
+            Write-Host "========================================" -ForegroundColor Cyan
+            Write-Host "Testing API via LoadBalancer" -ForegroundColor Cyan
+            Write-Host "========================================" -ForegroundColor Cyan
+            
+            # Test health
+            try {
+              $health = Invoke-RestMethod -Uri "http://${LB_IP}/health" -Headers @{ Host = "gists.local" } -TimeoutSec 10
+              Write-Host "✅ Health: $($health.status)" -ForegroundColor Green
+            } catch {
+              Write-Host "❌ Health check failed: $_" -ForegroundColor Red
+            }
+            
+            # Test gists
+            try {
+              $gists = Invoke-RestMethod -Uri "http://${LB_IP}/octocat" -Headers @{ Host = "gists.local" } -TimeoutSec 10
+              Write-Host "✅ Gists: Found $($gists.Count) for octocat" -ForegroundColor Green
+            } catch {
+              Write-Host "❌ Gists failed: $_" -ForegroundColor Red
+            }
+            
+            Write-Host ""
+            Write-Host "========================================" -ForegroundColor Green
+            Write-Host "🎉 DEPLOYMENT SUCCESSFUL!" -ForegroundColor Green
+            Write-Host "========================================" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "LoadBalancer IP: $LB_IP" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "Access URLs (no port-forward needed!):" -ForegroundColor Yellow
+            Write-Host "  curl -H 'Host: gists.local' http://$LB_IP/health" -ForegroundColor White
+            Write-Host "  curl -H 'Host: gists.local' http://$LB_IP/octocat" -ForegroundColor White
+            Write-Host "  curl -H 'Host: ${{ env.CUSTOM_DNS }}' http://$LB_IP/octocat" -ForegroundColor White
+            Write-Host ""
+            Write-Host "Or add to hosts file and use directly:" -ForegroundColor Yellow
+            Write-Host "  $LB_IP gists.local ${{ env.CUSTOM_DNS }}" -ForegroundColor White
+            Write-Host "  http://gists.local/octocat" -ForegroundColor White
+            Write-Host "  http://${{ env.CUSTOM_DNS }}/octocat" -ForegroundColor White
+            Write-Host ""
+          } else {
+            Write-Host "⚠️  No LoadBalancer IP, using port-forward fallback" -ForegroundColor Yellow
+            Write-Host "  kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8080:80" -ForegroundColor White
+            Write-Host "  curl -H 'Host: gists.local' http://localhost:8080/octocat" -ForegroundColor White
+          }
