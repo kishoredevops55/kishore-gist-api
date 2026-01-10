@@ -19,13 +19,13 @@ jobs:
       - name: Setup cluster context
         run: |
           kubectl config use-context ${{ env.CONTEXT_NAME }}
-          Write-Host "✅ Context set" -ForegroundColor Green
+          Write-Host "[OK] Context set" -ForegroundColor Green
 
       - name: Build and load image
         run: |
           docker build -t ${{ env.IMAGE_NAME }} .
           kind load docker-image ${{ env.IMAGE_NAME }} --name ${{ env.CLUSTER_NAME }}
-          Write-Host "✅ Image built and loaded" -ForegroundColor Green
+          Write-Host "[OK] Image built and loaded" -ForegroundColor Green
 
       - name: Deploy application
         run: |
@@ -33,7 +33,7 @@ jobs:
           kubectl label namespace ${{ env.NAMESPACE }} istio-injection=enabled --overwrite
           kubectl apply -f k8s/deployment.yaml
           kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=2m
-          Write-Host "✅ Application deployed" -ForegroundColor Green
+          Write-Host "[OK] Application deployed" -ForegroundColor Green
 
       - name: Setup MetalLB for LoadBalancer IP
         run: |
@@ -57,13 +57,13 @@ jobs:
             $l2Yaml = "apiVersion: metallb.io/v1beta1`nkind: L2Advertisement`nmetadata:`n  name: kind-l2`n  namespace: metallb-system`nspec:`n  ipAddressPools:`n  - kind-pool"
             $l2Yaml | kubectl apply -f -
             
-            Write-Host "✅ MetalLB configured" -ForegroundColor Green
+            Write-Host "[OK] MetalLB configured" -ForegroundColor Green
           }
 
       - name: Generate TLS Certificate
         shell: cmd
         run: |
-          kubectl get secret gists-tls-secret -n istio-system >nul 2>&1 && (echo TLS certificate exists && exit /b 0)
+          kubectl get secret gists-tls-secret -n istio-system >nul 2>&1 && (echo [OK] TLS certificate exists && exit /b 0)
           echo Generating TLS certificate...
           echo [req] > cert.conf
           echo distinguished_name = req_distinguished_name >> cert.conf
@@ -82,23 +82,26 @@ jobs:
           "C:\Program Files\Git\usr\bin\openssl.exe" req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -config cert.conf -extensions v3_req 2>nul
           kubectl create secret tls gists-tls-secret --cert=tls.crt --key=tls.key -n istio-system --dry-run=client -o yaml | kubectl apply -f -
           del cert.conf tls.key tls.crt 2>nul
-          echo TLS certificate created
+          echo [OK] TLS certificate created
 
       - name: Configure Istio Gateway and VirtualService
         run: |
           kubectl apply -f k8s/istio-gateway.yaml
-          Write-Host "✅ Istio Gateway configured" -ForegroundColor Green
+          Write-Host "[OK] Istio Gateway configured" -ForegroundColor Green
 
       - name: Patch Istio Ingress Gateway for LoadBalancer
+        shell: cmd
         run: |
-          $patchJson = '{"spec":{"type":"LoadBalancer"}}'
-          kubectl patch svc istio-ingressgateway -n istio-system -p $patchJson --type=merge
-          
+          kubectl patch svc istio-ingressgateway -n istio-system -p "{\"spec\":{\"type\":\"LoadBalancer\"}}" --type=merge
+          echo [OK] Istio Gateway patched to LoadBalancer
+
+      - name: Wait for LoadBalancer IP
+        run: |
           $retries = 0
           while ($retries -lt 15) {
             $externalIP = kubectl get svc istio-ingressgateway -n istio-system -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
             if ($externalIP) {
-              Write-Host "✅ Istio Gateway LoadBalancer IP: $externalIP" -ForegroundColor Green
+              Write-Host "[OK] Istio Gateway LoadBalancer IP: $externalIP" -ForegroundColor Green
               break
             }
             Write-Host "Waiting for LoadBalancer IP... ($retries/15)"
@@ -107,44 +110,34 @@ jobs:
           }
 
       - name: Test and display access URLs
+        shell: cmd
         run: |
-          Write-Host ""
-          Write-Host "========================================" -ForegroundColor Cyan
-          Write-Host "Testing API via Port-Forward" -ForegroundColor Cyan
-          Write-Host "========================================" -ForegroundColor Cyan
+          echo.
+          echo ========================================
+          echo Testing API via Port-Forward
+          echo ========================================
           
-          # Start port-forward in background
-          $job = Start-Job -ScriptBlock { kubectl port-forward -n istio-system svc/istio-ingressgateway 9443:443 2>&1 }
-          Start-Sleep -Seconds 5
+          start /b kubectl port-forward -n istio-system svc/istio-ingressgateway 9443:443
+          timeout /t 5 /nobreak >nul
           
-          # Test HTTPS
-          try {
-            $health = curl.exe -sk -H "Host: ${{ env.CUSTOM_DNS }}" https://localhost:9443/health | ConvertFrom-Json
-            Write-Host "✅ HTTPS Health: $($health.status)" -ForegroundColor Green
-          } catch {
-            Write-Host "⚠️ Health check: $_" -ForegroundColor Yellow
-          }
+          echo Testing HTTPS health endpoint...
+          curl.exe -sk -H "Host: gists.kishore.local" https://localhost:9443/health
+          echo.
           
-          try {
-            $gists = curl.exe -sk -H "Host: ${{ env.CUSTOM_DNS }}" https://localhost:9443/octocat | ConvertFrom-Json
-            Write-Host "✅ HTTPS Gists: Found $($gists.Count) for octocat" -ForegroundColor Green
-          } catch {
-            Write-Host "⚠️ Gists test: $_" -ForegroundColor Yellow
-          }
+          echo Testing HTTPS gists endpoint...
+          curl.exe -sk -H "Host: gists.kishore.local" https://localhost:9443/octocat
+          echo.
           
-          Stop-Job $job -ErrorAction SilentlyContinue
-          Remove-Job $job -Force -ErrorAction SilentlyContinue
-          
-          Write-Host ""
-          Write-Host "========================================" -ForegroundColor Green
-          Write-Host "🎉 DEPLOYMENT SUCCESSFUL!" -ForegroundColor Green
-          Write-Host "========================================" -ForegroundColor Green
-          Write-Host ""
-          Write-Host "HTTPS Access - Run port-forward first:" -ForegroundColor Yellow
-          Write-Host "  kubectl port-forward -n istio-system svc/istio-ingressgateway 443:443" -ForegroundColor White
-          Write-Host ""
-          Write-Host "Then access (with hosts file: 127.0.0.1 ${{ env.CUSTOM_DNS }}):" -ForegroundColor Yellow
-          Write-Host "  https://${{ env.CUSTOM_DNS }}/health" -ForegroundColor White
-          Write-Host "  https://${{ env.CUSTOM_DNS }}/octocat" -ForegroundColor White
-          Write-Host "  https://gists.local/octocat" -ForegroundColor White
-          Write-Host ""
+          echo.
+          echo ========================================
+          echo DEPLOYMENT SUCCESSFUL!
+          echo ========================================
+          echo.
+          echo HTTPS Access - Run port-forward first:
+          echo   kubectl port-forward -n istio-system svc/istio-ingressgateway 443:443
+          echo.
+          echo Then access (with hosts file: 127.0.0.1 gists.kishore.local):
+          echo   https://gists.kishore.local/health
+          echo   https://gists.kishore.local/octocat
+          echo   https://gists.local/octocat
+          echo.
