@@ -123,6 +123,22 @@ jobs:
             $retries++
           }
 
+      - name: Setup Windows Access Proxy
+        run: |
+          $proxyRunning = docker ps -q -f name=kind-proxy
+          if (-not $proxyRunning) {
+              Write-Host "Starting kind-proxy for Windows access..." -ForegroundColor Yellow
+              # Create simple nginx stream config for TCP passthrough
+              $nginxConf = "events {}`nstream {`n    upstream k8s_https { server 172.18.255.201:443; }`n    upstream k8s_http { server 172.18.255.201:80; }`n    server { listen 443; proxy_pass k8s_https; }`n    server { listen 80; proxy_pass k8s_http; }`n}"
+              $nginxConf | Out-File -FilePath "nginx-proxy.conf" -Encoding ascii
+              
+              # Run nginx with stream support (always restart to persist)
+              docker run -d --name kind-proxy --restart always --network kind -p 443:443 -p 80:80 -v ${PWD}/nginx-proxy.conf:/etc/nginx/nginx.conf:ro nginx:alpine
+              Write-Host "[OK] Permanent Access Proxy started on Port 443" -ForegroundColor Green
+          } else {
+              Write-Host "[OK] Permanent Access Proxy is running" -ForegroundColor Green
+          }
+
       - name: Test and display access URLs
         run: |
           Write-Host ""
@@ -130,13 +146,12 @@ jobs:
           Write-Host "DEPLOYMENT SUCCESSFUL!"
           Write-Host "========================================"
           Write-Host ""
-          Write-Host "HTTPS Access - Run port-forward first:"
-          Write-Host "  kubectl port-forward -n istio-system svc/istio-ingressgateway 443:443"
+          Write-Host "HTTPS Access (via Permanent Proxy):"
+          Write-Host "  URL: https://gists.kishore.local/health"
+          Write-Host "  URL: https://gists.kishore.local/octocat"
           Write-Host ""
-          Write-Host "Then access (with hosts file: 127.0.0.1 gists.kishore.local):"
-          Write-Host "  https://gists.kishore.local/health"
-          Write-Host "  https://gists.kishore.local/octocat"
-          Write-Host "  https://gists.local/octocat"
+          Write-Host "Note: Access is enabled via 'kind-proxy' container running in background on Port 443."
+          Write-Host "      No manual port-forward is required."
           Write-Host ""
           Write-Host "Or use curl:"
           Write-Host "  curl.exe -k https://gists.kishore.local/health"
@@ -255,10 +270,10 @@ jobs:
           Write-Host "MONITORING STACK DEPLOYED!"
           Write-Host "========================================"
           Write-Host ""
-          Write-Host "Add to Windows hosts file (C:\Windows\System32\drivers\etc\hosts):"
-          Write-Host "  $ingressIP    kishoregrafana.local"
-          Write-Host "  $ingressIP    gists.kishore.local"
-          Write-Host "  $ingressIP    rum.kishore.local"
+          Write-Host "Add to Windows hosts file (Required for Proxy Access):"
+          Write-Host "  127.0.0.1    kishoregrafana.local"
+          Write-Host "  127.0.0.1    gists.kishore.local"
+          Write-Host "  127.0.0.1    rum.kishore.local"
           Write-Host ""
           Write-Host "Grafana Access (HTTPS with self-signed cert):"
           Write-Host "  URL:      https://kishoregrafana.local"
@@ -270,12 +285,12 @@ jobs:
           Write-Host "  https://gists.kishore.local/{username}"
           Write-Host ""
           Write-Host "Monitoring Components (All Deployed):"
-          Write-Host "  ✓ Prometheus (Metrics) - http://prometheus:9090"
-          Write-Host "  ✓ Grafana (Visualization) - https://kishoregrafana.local"
-          Write-Host "  ✓ Loki (Logs) - http://loki:3100"
-          Write-Host "  ✓ Tempo (Traces) - http://tempo:3200"
-          Write-Host "  ✓ Blackbox Exporter (Synthetic Monitoring)"
-          Write-Host "  ✓ Faro RUM Collector - https://rum.kishore.local/collect"
+          Write-Host "  [OK] Prometheus (Metrics) - http://prometheus:9090"
+          Write-Host "  [OK] Grafana (Visualization) - https://kishoregrafana.local"
+          Write-Host "  [OK] Loki (Logs) - http://loki:3100"
+          Write-Host "  [OK] Tempo (Traces) - http://tempo:3200"
+          Write-Host "  [OK] Blackbox Exporter (Synthetic Monitoring)"
+          Write-Host "  [OK] Faro RUM Collector - https://rum.kishore.local/collect"
           Write-Host ""
           Write-Host "Datasources in Grafana:"
           Write-Host "  - Prometheus (Default)"
