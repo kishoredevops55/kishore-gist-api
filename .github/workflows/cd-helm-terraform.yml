@@ -81,7 +81,7 @@ jobs:
 
       - name: Set outputs for downstream jobs
         id: set-outputs
-        shell: pwsh
+        shell: powershell
         run: |
           $clusterName = "${{ env.CLUSTER_NAME }}"
           $kubeconfig = ""
