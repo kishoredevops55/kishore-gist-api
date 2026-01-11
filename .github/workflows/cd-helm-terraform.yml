@@ -42,13 +42,20 @@ jobs:
         working-directory: terraform
         run: terraform init
 
-      - name: Terraform Plan
+      - name: Terraform Apply (Kind cluster only)
         working-directory: terraform
-        run: terraform plan -out=tfplan
+        run: terraform apply -auto-approve -target="kind_cluster.dev"
 
-      - name: Terraform Apply
+      - name: Terraform Apply (MetalLB chart for CRDs)
         working-directory: terraform
-        run: terraform apply -auto-approve tfplan
+        run: |
+          helm repo add metallb https://metallb.github.io/metallb
+          helm repo update
+          terraform apply -auto-approve -target="helm_release.metallb"
+
+      - name: Terraform Apply (Full stack)
+        working-directory: terraform
+        run: terraform apply -auto-approve
 
       - name: Output Cluster Info
         working-directory: terraform
