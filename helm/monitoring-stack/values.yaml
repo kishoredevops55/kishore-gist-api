@@ -6,7 +6,7 @@ namespace: monitoring
 grafana:
   adminUser: "admin"
   # Password should be passed via --set grafana.adminPassword=SECRET
-  adminPassword: "admin"
+  adminPassword: ""
   
 image:
   pullPolicy: IfNotPresent

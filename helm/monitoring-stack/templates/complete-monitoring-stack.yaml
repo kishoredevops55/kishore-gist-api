@@ -458,10 +458,23 @@ data:
             "targets": [
               {
                 "expr": "sum(rate(github_api_requests_total{job='github-gists-api'}[5m])) by (status)",
-                "legendFormat": "Status {{status}}"
+                "legendFormat": "Status {{ printf "{{status}}" }}"
               }
             ]
           }
         ]
       }
     }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

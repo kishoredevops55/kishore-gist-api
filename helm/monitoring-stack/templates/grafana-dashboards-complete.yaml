@@ -170,7 +170,7 @@ data:
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
           "id": 1,
           "targets": [
-            { "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) by (instance)", "legendFormat": "{{instance}}", "refId": "A" }
+            { "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) by (instance)", "legendFormat": "{{ printf "{{instance}}" }}", "refId": "A" }
           ],
           "title": "CPU Usage",
           "type": "timeseries"
@@ -181,7 +181,7 @@ data:
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
           "id": 2,
           "targets": [
-            { "expr": "1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "{{instance}}", "refId": "A" }
+            { "expr": "1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "{{ printf "{{instance}}" }}", "refId": "A" }
           ],
           "title": "Memory Usage",
           "type": "timeseries"
@@ -201,7 +201,7 @@ data:
           "id": 3,
           "options": { "legend": { "displayMode": "table", "placement": "right" }, "pieType": "pie", "reduceOptions": { "calcs": ["lastNotNull"] } },
           "targets": [
-            { "expr": "count(kube_pod_info) by (namespace)", "legendFormat": "{{namespace}}", "refId": "A" }
+            { "expr": "count(kube_pod_info) by (namespace)", "legendFormat": "{{ printf "{{namespace}}" }}", "refId": "A" }
           ],
           "title": "Pods per Namespace",
           "type": "piechart"
@@ -244,7 +244,7 @@ data:
           "id": 1,
           "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
           "targets": [
-            { "expr": "probe_success{job=\"blackbox\"}", "legendFormat": "{{instance}}", "refId": "A" }
+            { "expr": "probe_success{job=\"blackbox\"}", "legendFormat": "{{ printf "{{instance}}" }}", "refId": "A" }
           ],
           "title": "Endpoint Status",
           "type": "stat"
@@ -255,7 +255,7 @@ data:
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
           "id": 2,
           "targets": [
-            { "expr": "probe_duration_seconds{job=\"blackbox\"}", "legendFormat": "{{instance}}", "refId": "A" }
+            { "expr": "probe_duration_seconds{job=\"blackbox\"}", "legendFormat": "{{ printf "{{instance}}" }}", "refId": "A" }
           ],
           "title": "Probe Duration (HTTPS Latency)",
           "type": "timeseries"
@@ -267,7 +267,7 @@ data:
           "id": 3,
           "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } },
           "targets": [
-            { "expr": "(probe_ssl_earliest_cert_expiry{job=\"blackbox\"} - time()) / 86400", "legendFormat": "{{instance}}", "refId": "A" }
+            { "expr": "(probe_ssl_earliest_cert_expiry{job=\"blackbox\"} - time()) / 86400", "legendFormat": "{{ printf "{{instance}}" }}", "refId": "A" }
           ],
           "title": "Certificate Expiry (Days Remaining)",
           "type": "stat"
@@ -296,7 +296,7 @@ data:
           "id": 1,
           "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["sum"] } },
           "targets": [
-            { "expr": "sum(count_over_time({namespace=~\".+\"}[5m])) by (namespace)", "legendFormat": "{{namespace}}", "refId": "A" }
+            { "expr": "sum(count_over_time({namespace=~\".+\"}[5m])) by (namespace)", "legendFormat": "{{ printf "{{namespace}}" }}", "refId": "A" }
           ],
           "title": "Log Volume by Namespace",
           "type": "stat"

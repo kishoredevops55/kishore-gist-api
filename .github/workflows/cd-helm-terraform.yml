@@ -238,12 +238,14 @@ jobs:
         if: ${{ inputs.deployment_method == 'helm' }}
         env:
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          GRAFANA_USER: ${{ secrets.GRAFANA_ADMIN_USER }}
         run: |
           Write-Host "Deploying Monitoring Stack with Helm..." -ForegroundColor Cyan
           helm upgrade --install monitoring-stack ./helm/monitoring-stack `
             --namespace monitoring `
             --create-namespace `
             --set grafana.adminPassword=$env:GRAFANA_PASSWORD `
+            --set grafana.adminUser=$env:GRAFANA_USER `
             --timeout 10m `
             --wait
           Write-Host "[OK] Monitoring Stack Deployed" -ForegroundColor Green
@@ -267,5 +269,5 @@ jobs:
           Write-Host ""
           Write-Host "Monitoring:"
           Write-Host "  Grafana: https://kishoregrafana.local"
-          Write-Host "  User: admin"
+          Write-Host "  User: (See GRAFANA_ADMIN_USER secret)"
           Write-Host ""
