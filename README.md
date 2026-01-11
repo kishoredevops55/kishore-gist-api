@@ -100,7 +100,10 @@ A **production-ready, enterprise-grade GitHub Gists API** built with modern clou
 ### 🔄 CI/CD Automation
 - ✅ **GitHub Actions**: Self-hosted Windows runner support
 - 🧪 **Testing Pipeline**: Unit tests with pytest and code quality checks
-- 🐳 **Docker Build**: Multi-stage builds with security scanning
+- � **Code Quality**: SonarCloud analysis for bugs, code smells, and security vulnerabilities
+- 🛡️ **Security Scanning**: Trivy, Snyk, Docker Scout, Bandit, and TruffleHog
+- 📋 **SBOM Generation**: Software Bill of Materials for compliance and supply chain security
+- 🐳 **Docker Build**: Multi-stage builds with automated security scanning
 - 📦 **Helm Packaging**: Chart versioning and release automation
 - 🚀 **Multi-Method Deployment**: Choose between Helm or raw manifests
 - 🏗️ **Terraform Integration**: Optional cluster provisioning with Terraform
@@ -206,6 +209,12 @@ A **production-ready, enterprise-grade GitHub Gists API** built with modern clou
 | **Logging** | Loki + Promtail | Log aggregation and querying |
 | **RUM** | Grafana Faro | Real User Monitoring |
 | **CI/CD** | GitHub Actions | Automated testing and deployment |
+| **Code Quality** | SonarCloud | Static analysis, code coverage, security hotspots |
+| **Security Scanning** | Trivy, Snyk, Docker Scout | Container vulnerability detection |
+| **Secret Detection** | TruffleHog | Git history credential scanning |
+| **SAST** | Bandit | Python security linting |
+| **SBOM** | Anchore Syft | Software Bill of Materials generation |
+| **Coverage** | Codecov | Test coverage tracking and reporting |
 | **Local Dev** | Kind | Kubernetes IN Docker for local testing |
 
 ---
@@ -434,15 +443,73 @@ curl http://gists.kishore.local/metrics
 
 #### 1. CI Pipeline (`.github/workflows/ci.yml`)
 
-**Triggers:** Push to any branch, Pull Requests
+**Triggers:** Manual workflow dispatch
 
+**Pipeline Jobs:**
+
+##### 📋 Job 1: Lint and Test
+**Steps:**
+1. ✅ **Checkout Code** - Full Git history for SonarCloud analysis
+2. 🐍 **Setup Python 3.12** - With pip caching for faster builds
+3. 📦 **Install Dependencies** - `pip install -r requirements-dev.txt`
+4. 🔍 **Lint with flake8** - Code style enforcement (max line length: 120)
+5. 🎯 **Type Check with mypy** - Static type analysis for Python
+6. 🧪 **Run Unit Tests** - `pytest -v --cov=app --cov-report=xml --cov-report=html`
+7. 📊 **Upload Coverage to Codecov** - Automatic coverage tracking and badges
+8. 🔬 **SonarCloud Scan** - Code quality and security analysis
+   - **Metrics Tracked**: Code smells, bugs, vulnerabilities, duplications
+   - **Coverage Integration**: Python coverage reports
+   - **Quality Gates**: Automated pass/fail based on quality standards
+   - **Dashboard**: [SonarCloud Portal](https://sonarcloud.io)
+
+##### 🔐 Job 2: Security Scan
 **Steps:**
 1. ✅ **Checkout Code**
-2. 🐍 **Setup Python 3.12**
-3. 📦 **Install Dependencies** (`pip install -r requirements-dev.txt`)
-4. 🧪 **Run Unit Tests** (`pytest tests/ -v --cov=app`)
-5. 🔍 **Code Quality Checks** (linting, type checking)
-6. 📊 **Upload Coverage Report**
+2. 🛡️ **Bandit Security Scan** - Python-specific security linter
+   - Detects common security issues (SQL injection, hardcoded passwords, etc.)
+   - Outputs JSON report for integration
+3. 🔑 **TruffleHog Secret Scanner** - Detect leaked credentials and secrets
+   - Scans commit history for API keys, tokens, passwords
+   - Verified secrets only (reduces false positives)
+   - Prevents accidental credential exposure
+
+##### 🐳 Job 3: Build and Scan
+**Steps:**
+1. ✅ **Checkout Code**
+2. 🏗️ **Setup Docker Buildx** - Multi-platform build support
+3. 🔐 **Login to DockerHub** - Using encrypted secrets
+4. 🏷️ **Extract Metadata** - Auto-generate tags (branch, SHA, latest)
+5. 📦 **Build Docker Image** - Multi-stage build with layer caching
+6. 🔍 **Trivy Vulnerability Scanner** - Comprehensive container security scanning
+   - **Scans**: OS packages, application dependencies, misconfigurations
+   - **Severity Filtering**: CRITICAL and HIGH vulnerabilities
+   - **Output**: SARIF format for GitHub Security tab
+   - **Database**: Up-to-date CVE database
+7. 🐍 **Snyk Container Scanner** - Alternative security scanning
+   - **Features**: Vulnerability detection, license compliance, fix suggestions
+   - **Integration**: Reports to Snyk dashboard
+   - **Threshold**: Fails on HIGH+ severity (configurable)
+8. 📋 **Generate SBOM** - Software Bill of Materials (SPDX format)
+   - Lists all dependencies and versions
+   - Compliance and supply chain security
+   - Artifact uploaded for audit trail
+9. 🚀 **Push to DockerHub** - Only on main branch
+10. 🛡️ **Docker Scout CVE Scanner** - DockerHub native security scanning
+    - **Features**: Real-time vulnerability detection, policy evaluation
+    - **Comparison**: Base image recommendations
+    - **Severity Filtering**: Critical and High CVEs only
+    - **Integration**: Native DockerHub security features
+
+**Security Scanning Tools Comparison:**
+
+| Tool | Type | Strengths | When to Use |
+|------|------|-----------|-------------|
+| **SonarCloud** | Static Analysis | Code quality, security hotspots, coverage | Every commit |
+| **Bandit** | SAST | Python-specific security issues | Python projects |
+| **TruffleHog** | Secret Detection | Git history scanning, verified secrets | Pre-commit, CI |
+| **Trivy** | Container Scanner | Fast, comprehensive CVE database | Container builds |
+| **Snyk** | Multi-purpose | Fix suggestions, license compliance | Enterprise security |
+| **Docker Scout** | Container Scanner | DockerHub integration, policy enforcement | DockerHub users |
 
 #### 2. CD Pipeline - Original Manifest Workflow (`.github/workflows/cd-local.yml`)
 
@@ -559,7 +626,189 @@ terraform apply -auto-approve
 
 ---
 
-## 📡 API Documentation
+## � Security & Code Quality
+
+### Multi-Layered Security Approach
+
+This project implements defense-in-depth security with multiple scanning tools at different stages:
+
+#### 🔬 Static Application Security Testing (SAST)
+
+**SonarCloud** - Continuous Code Quality
+- **What it scans**: Source code for bugs, vulnerabilities, code smells
+- **Key Metrics**:
+  - Maintainability Rating (Technical Debt)
+  - Reliability Rating (Bugs)
+  - Security Rating (Vulnerabilities)
+  - Coverage (Test Coverage Percentage)
+- **Integration**: Automatic PR decoration, quality gates
+- **Dashboard**: [View on SonarCloud](https://sonarcloud.io/project/overview?id=kishoredevops55_eq-assessment)
+
+**Bandit** - Python Security Linter
+- **What it scans**: Python code for common security issues
+- **Detects**: SQL injection, hardcoded passwords, insecure functions, shell injection
+- **Output**: JSON report with severity levels (LOW, MEDIUM, HIGH)
+- **Use Case**: Python-specific security best practices
+
+#### 🔑 Secret Detection
+
+**TruffleHog** - Git History Secret Scanner
+- **What it scans**: Commit history, branches, and file contents
+- **Detects**: API keys, tokens, passwords, private keys, credentials
+- **Features**: 
+  - 700+ credential detectors
+  - Verified secrets only (reduces false positives)
+  - Entropy-based detection
+- **Prevention**: Stops accidental credential commits
+
+#### 🐳 Container Security Scanning
+
+**Trivy** - Comprehensive Vulnerability Scanner
+- **What it scans**: 
+  - OS packages (Alpine, Ubuntu, etc.)
+  - Application dependencies (Python, npm, etc.)
+  - Container misconfigurations
+  - Secret detection in images
+- **CVE Database**: Daily updated vulnerability database
+- **Output Formats**: SARIF (GitHub Security), JSON, Table
+- **Severity Levels**: LOW, MEDIUM, HIGH, CRITICAL
+- **Speed**: Fast scanning (< 1 minute typical)
+
+**Snyk** - Developer Security Platform
+- **What it scans**: Container images, dependencies, Dockerfile
+- **Features**:
+  - Vulnerability detection with fix suggestions
+  - License compliance checking
+  - Base image recommendations
+  - Integration with Snyk dashboard
+- **Unique**: Provides automated fix PRs
+- **Database**: Proprietary vulnerability database + NVD
+
+**Docker Scout** - DockerHub Native Scanner
+- **What it scans**: Images pushed to DockerHub
+- **Features**:
+  - Real-time CVE detection
+  - Policy evaluation
+  - Base image comparisons
+  - Supply chain security
+- **Integration**: Native DockerHub security tab
+- **Recommendations**: Safer base image alternatives
+
+#### 📋 Software Bill of Materials (SBOM)
+
+**Anchore Syft** - SBOM Generator
+- **What it generates**: Complete dependency inventory
+- **Formats**: SPDX, CycloneDX, Syft JSON
+- **Use Cases**:
+  - Supply chain security
+  - License compliance
+  - Dependency tracking
+  - Audit trails
+- **Artifact**: Uploaded as GitHub Actions artifact
+
+### Security Scanning Workflow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    CI Pipeline Trigger                       │
+└───────────────────────┬─────────────────────────────────────┘
+                        │
+        ┌───────────────┴───────────────┐
+        │                               │
+        ▼                               ▼
+┌───────────────┐              ┌───────────────┐
+│  Code Stage   │              │ Secret Stage  │
+│               │              │               │
+│ • SonarCloud  │              │ • TruffleHog  │
+│ • Bandit      │              │   (Git Scan)  │
+│ • Flake8      │              └───────────────┘
+│ • MyPy        │                      │
+└───────┬───────┘                      │
+        │                              │
+        └──────────────┬───────────────┘
+                       │
+                       ▼
+              ┌────────────────┐
+              │  Build Stage   │
+              │                │
+              │ • Docker Build │
+              │ • Multi-Stage  │
+              └────────┬───────┘
+                       │
+        ┌──────────────┼──────────────┐
+        │              │              │
+        ▼              ▼              ▼
+┌──────────────┐ ┌──────────┐ ┌──────────────┐
+│    Trivy     │ │   Snyk   │ │ Docker Scout │
+│ (Fast Scan)  │ │(Detailed)│ │  (DockerHub) │
+└──────────────┘ └──────────┘ └──────────────┘
+        │              │              │
+        └──────────────┼──────────────┘
+                       │
+                       ▼
+              ┌────────────────┐
+              │  SBOM Stage    │
+              │                │
+              │ • Generate     │
+              │ • Upload       │
+              └────────────────┘
+```
+
+### Secrets Management
+
+**Required GitHub Secrets:**
+```yaml
+# DockerHub
+DOCKERHUB_USERNAME: Your DockerHub username
+DOCKERHUB_TOKEN: DockerHub access token
+
+# SonarCloud
+SONAR_TOKEN: SonarCloud authentication token
+
+# Snyk
+SNYK_TOKEN: Snyk API token
+
+# Codecov
+CODECOV_TOKEN: Codecov upload token (optional)
+
+# Application
+GH_API_TOKEN: GitHub Personal Access Token for API calls
+GRAFANA_ADMIN_USER: Grafana admin username
+GRAFANA_ADMIN_PASSWORD: Grafana admin password
+```
+
+### Security Best Practices Implemented
+
+✅ **Container Security**
+- Multi-stage Docker builds (minimal attack surface)
+- Non-root user (UID 1000)
+- Read-only root filesystem
+- No secrets in images
+- Minimal base image (Python slim)
+
+✅ **Kubernetes Security**
+- RBAC enabled
+- Network policies
+- Pod security standards
+- Resource limits
+- Security context enforcement
+
+✅ **Code Security**
+- Dependency scanning (Trivy, Snyk)
+- Static analysis (SonarCloud, Bandit)
+- Secret detection (TruffleHog)
+- Type checking (MyPy)
+- Linting (Flake8)
+
+✅ **Supply Chain Security**
+- SBOM generation
+- Image signing (future)
+- Verified base images
+- Dependency pinning
+
+---
+
+## �📡 API Documentation
 
 ### Base URL
 ```
