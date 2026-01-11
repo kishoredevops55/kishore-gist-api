@@ -16,7 +16,7 @@ data:
           severity: warning
         annotations:
           summary: "High error rate detected"
-          description: "Error rate is {{ printf "{{ $value }}" }} errors/sec"
+          description: "Error rate is {{ "{{" }} $value {{ "}}" }} errors/sec"
       
       - alert: HighLatency
         expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
@@ -25,7 +25,7 @@ data:
           severity: warning
         annotations:
           summary: "High latency detected"
-          description: "P95 latency is {{ printf "{{ $value }}" }}s"
+          description: "P95 latency is {{ "{{" }} $value {{ "}}" }}s"
       
       - alert: PodDown
         expr: up{job="github-gists-api"} == 0
@@ -34,4 +34,4 @@ data:
           severity: critical
         annotations:
           summary: "Pod is down"
-          description: "Pod {{ printf "{{ $labels.pod }}" }} is down"
+          description: "Pod {{ "{{" }} $labels.pod {{ "}}" }} is down"

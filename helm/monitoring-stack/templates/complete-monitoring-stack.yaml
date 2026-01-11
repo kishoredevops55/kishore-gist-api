@@ -458,7 +458,7 @@ data:
             "targets": [
               {
                 "expr": "sum(rate(github_api_requests_total{job='github-gists-api'}[5m])) by (status)",
-                "legendFormat": "Status {{ printf "{{status}}" }}"
+                "legendFormat": "Status {{ "{{" }}status{{ "}}" }}"
               }
             ]
           }

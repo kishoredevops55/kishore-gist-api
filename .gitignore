@@ -61,6 +61,21 @@ logs/
 .dmypy.json
 dmypy.json
 
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+.terraform/
+.terraform.lock.hcl
+terraform.rc
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
 # Misc
 *.bak
 *.tmp
