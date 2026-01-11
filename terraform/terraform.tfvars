@@ -3,15 +3,15 @@
 # Matches existing cd-local.yml configuration
 # =============================================================================
 
-cluster_name       = "kind-dev"
+cluster_name       = "kind-tf"
 kubernetes_version = "v1.28.0"
 
-# Port mappings
-api_server_port = 6443
-http_port       = 80
-https_port      = 443
+# Port mappings (Avoid conflicts with existing kind-dev or kind-proxy)
+api_server_port = 6444
+http_port       = 8090
+https_port      = 8443
 
-# Cluster topology
+# Cluster topology (1 Control Plane + 2 Workers = 3 Nodes)
 worker_nodes = 2
 
 # Service mesh

@@ -38,13 +38,17 @@ terraform {
 provider "kind" {}
 
 provider "kubernetes" {
-  config_path    = pathexpand("~/.kube/config")
-  config_context = "kind-${var.cluster_name}"
+  host                   = kind_cluster.dev.endpoint
+  client_certificate     = kind_cluster.dev.client_certificate
+  client_key             = kind_cluster.dev.client_key
+  cluster_ca_certificate = kind_cluster.dev.cluster_ca_certificate
 }
 
 provider "helm" {
   kubernetes {
-    config_path    = pathexpand("~/.kube/config")
-    config_context = "kind-${var.cluster_name}"
+    host                   = kind_cluster.dev.endpoint
+    client_certificate     = kind_cluster.dev.client_certificate
+    client_key             = kind_cluster.dev.client_key
+    cluster_ca_certificate = kind_cluster.dev.cluster_ca_certificate
   }
 }
