@@ -1,0 +1,20 @@
+apiVersion: v2
+name: monitoring-stack
+description: |
+  Complete observability stack for GitHub Gists API.
+  Includes Prometheus, Grafana, Loki, Promtail, Tempo, Faro RUM, and Exporters.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+keywords:
+  - monitoring
+  - prometheus
+  - grafana
+  - loki
+  - tempo
+  - observability
+
+maintainers:
+  - name: Kishore
+    email: kishore@example.com

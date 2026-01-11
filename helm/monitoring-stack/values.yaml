@@ -1,0 +1,12 @@
+# Monitoring Stack Values
+
+# Namespace is typically "monitoring" but can be overridden by release namespace
+namespace: monitoring
+
+grafana:
+  adminUser: "admin"
+  # Password should be passed via --set grafana.adminPassword=SECRET
+  adminPassword: "admin"
+  
+image:
+  pullPolicy: IfNotPresent

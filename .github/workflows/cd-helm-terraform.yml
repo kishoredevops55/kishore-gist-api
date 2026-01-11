@@ -104,6 +104,31 @@ jobs:
             Write-Host "[WARN] No GitHub token provided" -ForegroundColor Yellow
           }
 
+      - name: Setup MetalLB for LoadBalancer IP
+        run: |
+          $metallbNs = kubectl get namespace metallb-system --ignore-not-found=true 2>$null
+          if ([string]::IsNullOrEmpty($metallbNs)) {
+            Write-Host "Installing MetalLB..." -ForegroundColor Yellow
+            kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
+            Start-Sleep -Seconds 15
+            kubectl wait --namespace metallb-system --for=condition=ready pod --selector=app=metallb --timeout=120s 2>$null
+          }
+          
+          $kindNetwork = docker network inspect kind --format "{{range .IPAM.Config}}{{.Subnet}}{{end}}" 2>$null
+          if ($kindNetwork) {
+            $baseIP = ($kindNetwork -split '\.')[0..1] -join '.'
+            $ipRange = "$baseIP.255.200-$baseIP.255.250"
+            Write-Host "Configuring MetalLB IP pool: $ipRange" -ForegroundColor Yellow
+            
+            $poolYaml = "apiVersion: metallb.io/v1beta1`nkind: IPAddressPool`nmetadata:`n  name: kind-pool`n  namespace: metallb-system`nspec:`n  addresses:`n  - $ipRange"
+            $poolYaml | kubectl apply -f -
+            
+            $l2Yaml = "apiVersion: metallb.io/v1beta1`nkind: L2Advertisement`nmetadata:`n  name: kind-l2`n  namespace: metallb-system`nspec:`n  ipAddressPools:`n  - kind-pool"
+            $l2Yaml | kubectl apply -f -
+            
+            Write-Host "[OK] MetalLB configured" -ForegroundColor Green
+          }
+
       # =======================================================================
       # HELM DEPLOYMENT
       # =======================================================================
@@ -151,30 +176,52 @@ jobs:
         run: |
           kubectl get secret gists-tls-secret -n istio-system >nul 2>&1 && (echo [OK] TLS certificate exists && exit /b 0)
           echo Generating TLS certificate...
-          echo [req] > cert.conf
-          echo distinguished_name = req_distinguished_name >> cert.conf
-          echo x509_extensions = v3_req >> cert.conf
-          echo prompt = no >> cert.conf
-          echo [req_distinguished_name] >> cert.conf
-          echo CN = gists.kishore.local >> cert.conf
-          echo [v3_req] >> cert.conf
-          echo keyUsage = digitalSignature, keyEncipherment >> cert.conf
-          echo extendedKeyUsage = serverAuth >> cert.conf
-          echo subjectAltName = @alt_names >> cert.conf
-          echo [alt_names] >> cert.conf
-          echo DNS.1 = gists.kishore.local >> cert.conf
-          echo DNS.2 = gists.local >> cert.conf
-          echo DNS.3 = *.local >> cert.conf
-          "C:\Program Files\Git\usr\bin\openssl.exe" req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -config cert.conf -extensions v3_req 2>nul
-          kubectl create secret tls gists-tls-secret --cert=tls.crt --key=tls.key -n istio-system --dry-run=client -o yaml | kubectl apply -f -
-          del cert.conf tls.key tls.crt 2>nul
-          echo [OK] TLS certificate created
-
-      - name: Patch Istio Gateway for LoadBalancer
-        shell: cmd
+          echoWait for LoadBalancer IP
         run: |
-          kubectl patch svc istio-ingressgateway -n istio-system -p "{\"spec\":{\"type\":\"LoadBalancer\"}}" --type=merge
-          echo [OK] Istio Gateway patched
+          $retries = 0
+          while ($retries -lt 15) {
+            $externalIP = kubectl get svc istio-ingressgateway -n istio-system -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
+            if ($externalIP) {
+              Write-Host "[OK] Istio Gateway LoadBalancer IP: $externalIP" -ForegroundColor Green
+              break
+            }
+            Write-Host "Waiting for LoadBalancer IP... ($retries/15)"
+            Start-Sleep -Seconds 4
+            $retries++
+          }
+
+      - name: Setup Windows Access Proxy
+        run: |
+          $proxyRunning = docker ps -q -f name=kind-proxy
+          if (-not $proxyRunning) {
+              Write-Host "Starting kind-proxy for Windows access..." -ForegroundColor Yellow
+              # Create simple nginx stream config for TCP passthrough
+              $nginxConf = "events {}`nstream {`n    upstream k8s_https { server 172.18.255.201:443; }`n    upstream k8s_http { server 172.18.255.201:80; }`n    server { listen 443; proxy_pass k8s_https; }`n    server { listen 80; proxy_pass k8s_http; }`n}"
+              $nginxConf | Out-File -FilePath "nginx-proxy.conf" -Encoding ascii
+              
+              # Run nginx with stream support (always restart to persist)
+              docker run -d --name kind-proxy --restart always --network kind -p 443:443 -p 80:80 -v ${PWD}/nginx-proxy.conf:/etc/nginx/nginx.conf:ro nginx:alpine
+              Write-Host "[OK] Permanent Access Proxy started on Port 443" -ForegroundColor Green
+          } else {
+              Write-Host "[OK] Permanent Access Proxy is running" -ForegroundColor Green
+          }
+
+      # =======================================================================
+      # MONITORING STACK DEPLOYMENT
+      # =======================================================================
+      - name: Deploy Monitoring Stack (Helm)
+        if: ${{ inputs.deployment_method == 'helm' }}
+        env:
+          GRAFANA_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: |
+          Write-Host "Deploying Monitoring Stack with Helm..." -ForegroundColor Cyan
+          helm upgrade --install monitoring-stack ./helm/monitoring-stack `
+            --namespace monitoring `
+            --create-namespace `
+            --set grafana.adminPassword=$env:GRAFANA_PASSWORD `
+            --timeout 10m `
+            --wait
+          Write-Host "[OK] Monitoring Stack Deployed" -ForegroundColor Green
 
       - name: Display Deployment Info
         run: |
@@ -192,4 +239,8 @@ jobs:
           Write-Host "Verify:"
           Write-Host "  kubectl get pods -n ${{ env.NAMESPACE }}"
           Write-Host "  helm list -n ${{ env.NAMESPACE }}"
+          Write-Host ""
+          Write-Host "Monitoring:"
+          Write-Host "  Grafana: https://kishoregrafana.local"
+          Write-Host "  User: admin"
           Write-Host ""
