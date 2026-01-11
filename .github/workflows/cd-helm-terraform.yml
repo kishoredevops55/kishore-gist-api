@@ -199,6 +199,7 @@ jobs:
           helm upgrade --install gists-api ./helm `
             --namespace ${{ env.NAMESPACE }} `
             --values ./helm/values-kind.yaml `
+            --force `
             --wait `
             --timeout 5m
           
