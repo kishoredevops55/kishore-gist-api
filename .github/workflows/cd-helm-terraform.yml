@@ -254,15 +254,15 @@ jobs:
           echo [OK] TLS certificate created
 
       - name: Patch Istio Gateway for LoadBalancer
-        shell: cmd
+        shell: powershell
         run: |
-          kubectl get svc istio-ingressgateway -n istio-system >nul 2>&1
-          if %ERRORLEVEL% NEQ 0 (
-            echo [INFO] Istio ingressgateway service not found; skipping patch
-          ) else (
-            kubectl patch svc istio-ingressgateway -n istio-system -p "{\"spec\":{\"type\":\"LoadBalancer\"}}" --type=merge
-            echo [OK] Istio Gateway patched
-          )
+          $svc = kubectl get svc istio-ingressgateway -n istio-system --ignore-not-found
+          if ($svc) {
+            kubectl patch svc istio-ingressgateway -n istio-system -p '{\"spec\":{\"type\":\"LoadBalancer\"}}' --type=merge
+            Write-Host "[OK] Istio Gateway patched"
+          } else {
+            Write-Host "[INFO] Istio ingressgateway service not found; skipping patch" -ForegroundColor Yellow
+          }
 
       - name: Wait for LoadBalancer IP
         run: |
