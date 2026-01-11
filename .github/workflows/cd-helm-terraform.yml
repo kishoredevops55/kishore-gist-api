@@ -57,7 +57,6 @@ jobs:
           }
 
       - name: Terraform Init
-        if: steps.check-kind.outputs.exists == 'false'
         working-directory: terraform
         run: terraform init
 
