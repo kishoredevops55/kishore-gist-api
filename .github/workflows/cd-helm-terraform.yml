@@ -176,7 +176,32 @@ jobs:
         run: |
           kubectl get secret gists-tls-secret -n istio-system >nul 2>&1 && (echo [OK] TLS certificate exists && exit /b 0)
           echo Generating TLS certificate...
-          echoWait for LoadBalancer IP
+          echo [req] > cert.conf
+          echo distinguished_name = req_distinguished_name >> cert.conf
+          echo x509_extensions = v3_req >> cert.conf
+          echo prompt = no >> cert.conf
+          echo [req_distinguished_name] >> cert.conf
+          echo CN = gists.kishore.local >> cert.conf
+          echo [v3_req] >> cert.conf
+          echo keyUsage = digitalSignature, keyEncipherment >> cert.conf
+          echo extendedKeyUsage = serverAuth >> cert.conf
+          echo subjectAltName = @alt_names >> cert.conf
+          echo [alt_names] >> cert.conf
+          echo DNS.1 = gists.kishore.local >> cert.conf
+          echo DNS.2 = gists.local >> cert.conf
+          echo DNS.3 = *.local >> cert.conf
+          "C:\Program Files\Git\usr\bin\openssl.exe" req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -config cert.conf -extensions v3_req 2>nul
+          kubectl create secret tls gists-tls-secret --cert=tls.crt --key=tls.key -n istio-system --dry-run=client -o yaml | kubectl apply -f -
+          del cert.conf tls.key tls.crt 2>nul
+          echo [OK] TLS certificate created
+
+      - name: Patch Istio Gateway for LoadBalancer
+        shell: cmd
+        run: |
+          kubectl patch svc istio-ingressgateway -n istio-system -p "{\"spec\":{\"type\":\"LoadBalancer\"}}" --type=merge
+          echo [OK] Istio Gateway patched
+
+      - name: Wait for LoadBalancer IP
         run: |
           $retries = 0
           while ($retries -lt 15) {
