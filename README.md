@@ -315,8 +315,8 @@ open -a Docker
 ### 1️⃣ Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/eq-assessment.git
-cd eq-assessment
+git clone https://github.com/yourusername/kishore-gist-api.git
+cd kishore-gist-api
 ```
 
 ### 2️⃣ Choose Your Deployment Method
