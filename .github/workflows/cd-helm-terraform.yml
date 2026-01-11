@@ -116,8 +116,6 @@ jobs:
           helm upgrade --install gists-api ./helm `
             --namespace ${{ env.NAMESPACE }} `
             --values ./helm/values-kind.yaml `
-            --set image.repository=${{ env.IMAGE_NAME | split(':') | first }} `
-            --set image.tag=${{ env.IMAGE_NAME | split(':') | last }} `
             --wait `
             --timeout 5m
           
