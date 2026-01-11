@@ -266,16 +266,21 @@ jobs:
 
       - name: Wait for LoadBalancer IP
         run: |
-          $retries = 0
-          while ($retries -lt 15) {
-            $externalIP = kubectl get svc istio-ingressgateway -n istio-system -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
-            if ($externalIP) {
-              Write-Host "[OK] Istio Gateway LoadBalancer IP: $externalIP" -ForegroundColor Green
-              break
+          $svc = kubectl get svc istio-ingressgateway -n istio-system --ignore-not-found
+          if (-not $svc) {
+            Write-Host "[INFO] Istio ingressgateway service not found; skipping LoadBalancer IP wait" -ForegroundColor Yellow
+          } else {
+            $retries = 0
+            while ($retries -lt 15) {
+              $externalIP = kubectl get svc istio-ingressgateway -n istio-system -o jsonpath="{.status.loadBalancer.ingress[0].ip}" 2>$null
+              if ($externalIP) {
+                Write-Host "[OK] Istio Gateway LoadBalancer IP: $externalIP" -ForegroundColor Green
+                break
+              }
+              Write-Host "Waiting for LoadBalancer IP... ($retries/15)"
+              Start-Sleep -Seconds 4
+              $retries++
             }
-            Write-Host "Waiting for LoadBalancer IP... ($retries/15)"
-            Start-Sleep -Seconds 4
-            $retries++
           }
 
       - name: Setup Windows Access Proxy
