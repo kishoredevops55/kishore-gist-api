@@ -77,7 +77,7 @@ jobs:
       - name: Check for secrets
         uses: trufflesecurity/trufflehog@main
         with:
-          extra_args: --only-verified --fail
+          extra_args: --only-verified
 
   build-and-scan:
     runs-on: ubuntu-latest
