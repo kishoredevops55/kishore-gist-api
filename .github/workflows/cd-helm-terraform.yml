@@ -24,6 +24,8 @@ jobs:
   terraform-provision:
     if: ${{ inputs.provision_cluster == true }}
     runs-on: [self-hosted, Windows, X64]
+    env:
+      CLUSTER_NAME: kind-tf
     
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +46,13 @@ jobs:
 
       - name: Terraform Apply (Kind cluster only)
         working-directory: terraform
-        run: terraform apply -auto-approve -target="kind_cluster.dev"
+        run: |
+          $exists = kind get clusters 2>$null | Select-String -Pattern "^${{ env.CLUSTER_NAME }}$"
+          if ($exists) {
+            Write-Host "[INFO] Kind cluster '${{ env.CLUSTER_NAME }}' already exists; skipping create" -ForegroundColor Yellow
+          } else {
+            terraform apply -auto-approve -target="kind_cluster.dev"
+          }
 
       - name: Terraform Apply (MetalLB chart for CRDs)
         working-directory: terraform
