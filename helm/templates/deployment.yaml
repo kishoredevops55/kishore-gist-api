@@ -1,47 +1,85 @@
+{{/*
+Deployment - Exact match with k8s/deployment.yaml
+*/}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "github-gists-api.fullname" . }}
+  namespace: {{ include "github-gists-api.namespace" . }}
   labels:
     {{- include "github-gists-api.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.deploymentAnnotations | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    {{- toYaml .Values.strategy | nindent 4 }}
   selector:
     matchLabels:
-      {{- include "github-gists-api.selectorLabels" . | nindent 6 }}
+      app: {{ include "github-gists-api.fullname" . }}
   template:
     metadata:
       labels:
-        {{- include "github-gists-api.selectorLabels" . | nindent 8 }}
+        app: {{ include "github-gists-api.fullname" . }}
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      
       containers:
-      - name: {{ .Chart.Name }}
+      - name: api
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
+        
         ports:
-        - name: http
-          containerPort: {{ .Values.service.targetPort }}
+        - containerPort: {{ .Values.containerPort }}
+          name: http
           protocol: TCP
-        livenessProbe:
-          {{- toYaml .Values.livenessProbe | nindent 10 }}
-        readinessProbe:
-          {{- toYaml .Values.readinessProbe | nindent 10 }}
-        resources:
-          {{- toYaml .Values.resources | nindent 10 }}
+        
+        env:
+        {{- range $key, $value := .Values.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        {{- if .Values.githubToken.enabled }}
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.githubToken.secretName }}
+              key: {{ .Values.githubToken.secretKey }}
+              optional: {{ .Values.githubToken.optional }}
+        {{- end }}
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
+        
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        
+        livenessProbe:
+          {{- toYaml .Values.livenessProbe | nindent 10 }}
+        
+        readinessProbe:
+          {{- toYaml .Values.readinessProbe | nindent 10 }}
+        
         volumeMounts:
-        - name: tmp
-          mountPath: /tmp
+        {{- toYaml .Values.volumeMounts | nindent 8 }}
+      
       volumes:
-      - name: tmp
-        emptyDir: {}
+      {{- toYaml .Values.volumes | nindent 6 }}

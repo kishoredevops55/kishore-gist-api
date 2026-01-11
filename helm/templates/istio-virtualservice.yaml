@@ -1,0 +1,48 @@
+{{/*
+Istio VirtualService - Exact match with k8s/istio-gateway.yaml
+*/}}
+{{- if .Values.istio.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ .Values.istio.virtualService.name }}
+  namespace: {{ include "github-gists-api.namespace" . }}
+  labels:
+    {{- include "github-gists-api.labels" . | nindent 4 }}
+spec:
+  hosts:
+  {{- range .Values.istio.gateway.hosts }}
+  - {{ . | quote }}
+  {{- end }}
+  gateways:
+  - {{ .Values.istio.gateway.name }}
+  http:
+  # Health and metrics routes with faster retries
+  - match:
+    - uri:
+        prefix: /health
+    - uri:
+        prefix: /metrics
+    route:
+    - destination:
+        host: {{ include "github-gists-api.serviceFQDN" . }}
+        port:
+          number: {{ .Values.service.port }}
+    retries:
+      attempts: {{ .Values.istio.virtualService.healthRetries.attempts }}
+      perTryTimeout: {{ .Values.istio.virtualService.healthRetries.perTryTimeout }}
+      retryOn: {{ .Values.istio.virtualService.retries.retryOn }}
+  # Default route for all other requests
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: {{ include "github-gists-api.serviceFQDN" . }}
+        port:
+          number: {{ .Values.service.port }}
+    timeout: {{ .Values.istio.virtualService.timeout }}
+    retries:
+      attempts: {{ .Values.istio.virtualService.retries.attempts }}
+      perTryTimeout: {{ .Values.istio.virtualService.retries.perTryTimeout }}
+{{- end }}

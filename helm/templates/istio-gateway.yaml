@@ -1,0 +1,39 @@
+{{/*
+Istio Gateway - Exact match with k8s/istio-gateway.yaml
+*/}}
+{{- if .Values.istio.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: {{ .Values.istio.gateway.name }}
+  namespace: {{ include "github-gists-api.namespace" . }}
+  labels:
+    {{- include "github-gists-api.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- toYaml .Values.istio.gateway.selector | nindent 4 }}
+  servers:
+  # HTTP access (no redirect for local dev)
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    {{- range .Values.istio.gateway.hosts }}
+    - {{ . | quote }}
+    {{- end }}
+  # HTTPS with TLS termination
+  {{- if .Values.istio.gateway.tls.enabled }}
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    {{- range .Values.istio.gateway.hosts }}
+    - {{ . | quote }}
+    {{- end }}
+    tls:
+      mode: {{ .Values.istio.gateway.tls.mode }}
+      credentialName: {{ .Values.istio.gateway.tls.credentialName }}
+  {{- end }}
+{{- end }}

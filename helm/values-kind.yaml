@@ -1,0 +1,42 @@
+# =============================================================================
+# Local Kind Cluster Values
+# Use this for local development: helm upgrade --install gists-api ./helm -f helm/values-kind.yaml -n production
+# =============================================================================
+
+# Application name (exact match with working k8s manifest)
+fullnameOverride: "github-gists-api"
+namespace: production
+
+# Local image settings
+image:
+  repository: github-gists-api
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# Disable imagePullSecrets for local dev (no registry auth needed)
+imagePullSecrets: []
+
+# Environment for local development
+env:
+  PORT: "8080"
+  LOG_LEVEL: "debug"
+  OTEL_ENABLED: "true"
+  OTEL_SERVICE_NAME: "github-gists-api"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo.monitoring.svc.cluster.local:4317"
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  ENVIRONMENT: "development"
+
+# Local Istio configuration
+istio:
+  enabled: true
+  gateway:
+    name: gists-gateway
+    selector:
+      istio: ingressgateway
+    hosts:
+      - "gists.kishore.local"
+      - "gists.local"
+    tls:
+      enabled: true
+      mode: SIMPLE
+      credentialName: gists-tls-secret

@@ -1,0 +1,55 @@
+{{/*
+Istio Security Policies - Exact match with k8s/istio-gateway.yaml
+PeerAuthentication and AuthorizationPolicy
+*/}}
+{{- if .Values.istio.enabled }}
+{{- if .Values.istio.peerAuthentication.enabled }}
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: {{ include "github-gists-api.fullname" . }}-mtls
+  namespace: {{ include "github-gists-api.namespace" . }}
+  labels:
+    {{- include "github-gists-api.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "github-gists-api.fullname" . }}
+  mtls:
+    mode: {{ .Values.istio.peerAuthentication.mode }}
+{{- end }}
+
+{{- if .Values.istio.authorizationPolicy.enabled }}
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ include "github-gists-api.fullname" . }}-authz
+  namespace: {{ include "github-gists-api.namespace" . }}
+  labels:
+    {{- include "github-gists-api.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "github-gists-api.fullname" . }}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces:
+        {{- range .Values.istio.authorizationPolicy.allowedNamespaces }}
+        - {{ . | quote }}
+        {{- end }}
+  - to:
+    - operation:
+        methods:
+        {{- range .Values.istio.authorizationPolicy.allowedMethods }}
+        - {{ . | quote }}
+        {{- end }}
+        paths:
+        {{- range .Values.istio.authorizationPolicy.allowedPaths }}
+        - {{ . | quote }}
+        {{- end }}
+{{- end }}
+{{- end }}

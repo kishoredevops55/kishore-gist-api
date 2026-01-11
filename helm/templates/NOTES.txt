@@ -1,0 +1,67 @@
+================================================================================
+  GitHub Gists API - Helm Chart Deployment
+================================================================================
+
+🎉 Congratulations! Your application has been deployed successfully.
+
+Namespace: {{ include "github-gists-api.namespace" . }}
+Release:   {{ .Release.Name }}
+
+================================================================================
+  APPLICATION ACCESS
+================================================================================
+
+{{- if .Values.istio.enabled }}
+HTTPS Access (via Istio Gateway):
+{{- range .Values.istio.gateway.hosts }}
+  • https://{{ . }}/health
+  • https://{{ . }}/{username}
+{{- end }}
+
+Note: Ensure your hosts file has the correct DNS entries:
+  127.0.0.1    gists.kishore.local
+  127.0.0.1    gists.local
+{{- end }}
+
+================================================================================
+  VERIFY DEPLOYMENT
+================================================================================
+
+Check pods status:
+  kubectl get pods -n {{ include "github-gists-api.namespace" . }} -l app={{ include "github-gists-api.fullname" . }}
+
+Check service:
+  kubectl get svc -n {{ include "github-gists-api.namespace" . }}
+
+Check HPA:
+  kubectl get hpa -n {{ include "github-gists-api.namespace" . }}
+
+View logs:
+  kubectl logs -n {{ include "github-gists-api.namespace" . }} -l app={{ include "github-gists-api.fullname" . }} -f
+
+================================================================================
+  ISTIO RESOURCES
+================================================================================
+
+{{- if .Values.istio.enabled }}
+Gateway:        {{ .Values.istio.gateway.name }}
+VirtualService: {{ .Values.istio.virtualService.name }}
+DestinationRule: {{ .Values.istio.destinationRule.name }}
+
+Check Istio resources:
+  kubectl get gateway,virtualservice,destinationrule -n {{ include "github-gists-api.namespace" . }}
+{{- else }}
+Istio is disabled. Enable it by setting istio.enabled=true
+{{- end }}
+
+================================================================================
+  MONITORING
+================================================================================
+
+Prometheus scraping is enabled:
+  • Port: 8080
+  • Path: /metrics
+
+ServiceMonitor can be added for Prometheus Operator integration.
+
+================================================================================

@@ -1,0 +1,197 @@
+name: CD Pipeline (Helm + Terraform)
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_method:
+        description: 'Deployment method'
+        required: true
+        default: 'helm'
+        type: choice
+        options:
+          - helm
+          - manifest
+      provision_cluster:
+        description: 'Provision cluster via Terraform'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  # ==========================================================================
+  # OPTIONAL: Terraform Cluster Provisioning
+  # ==========================================================================
+  terraform-provision:
+    if: ${{ inputs.provision_cluster == true }}
+    runs-on: [self-hosted, Windows, X64]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        run: |
+          $terraformVersion = terraform --version 2>$null
+          if ($terraformVersion) {
+            Write-Host "[OK] Terraform already installed: $terraformVersion" -ForegroundColor Green
+          } else {
+            Write-Host "Installing Terraform..." -ForegroundColor Cyan
+            choco install terraform -y
+          }
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Output Cluster Info
+        working-directory: terraform
+        run: |
+          terraform output -json | ConvertFrom-Json | Format-List
+          Write-Host "[OK] Cluster provisioned successfully" -ForegroundColor Green
+
+  # ==========================================================================
+  # MAIN: Deploy Application
+  # ==========================================================================
+  deploy-to-kind:
+    needs: [terraform-provision]
+    if: always() && (needs.terraform-provision.result == 'success' || needs.terraform-provision.result == 'skipped')
+    runs-on: [self-hosted, Windows, X64]
+    env:
+      CLUSTER_NAME: kind-dev
+      CONTEXT_NAME: kind-kind-dev
+      IMAGE_NAME: github-gists-api:latest
+      NAMESPACE: production
+      CUSTOM_DNS: gists.kishore.local
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup cluster context
+        run: |
+          kubectl config use-context ${{ env.CONTEXT_NAME }}
+          Write-Host "[OK] Context set" -ForegroundColor Green
+
+      - name: Build and load image
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }} .
+          kind load docker-image ${{ env.IMAGE_NAME }} --name ${{ env.CLUSTER_NAME }}
+          Write-Host "[OK] Image built and loaded" -ForegroundColor Green
+
+      - name: Create namespace with Istio injection
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label namespace ${{ env.NAMESPACE }} istio-injection=enabled --overwrite
+          Write-Host "[OK] Namespace ready" -ForegroundColor Green
+
+      - name: Setup GitHub Token Secret
+        env:
+          GH_TOKEN: ${{ secrets.GH_API_TOKEN }}
+        run: |
+          if ($env:GH_TOKEN) {
+            kubectl delete secret github-token -n ${{ env.NAMESPACE }} --ignore-not-found
+            kubectl create secret generic github-token `
+              --from-literal=GITHUB_TOKEN=$env:GH_TOKEN `
+              -n ${{ env.NAMESPACE }}
+            Write-Host "[OK] GitHub token secret configured" -ForegroundColor Green
+          } else {
+            Write-Host "[WARN] No GitHub token provided" -ForegroundColor Yellow
+          }
+
+      # =======================================================================
+      # HELM DEPLOYMENT
+      # =======================================================================
+      - name: Deploy with Helm
+        if: ${{ inputs.deployment_method == 'helm' }}
+        run: |
+          Write-Host "Deploying with Helm..." -ForegroundColor Cyan
+          
+          # Helm upgrade/install with Kind-specific values
+          helm upgrade --install gists-api ./helm `
+            --namespace ${{ env.NAMESPACE }} `
+            --values ./helm/values-kind.yaml `
+            --set image.repository=${{ env.IMAGE_NAME | split(':') | first }} `
+            --set image.tag=${{ env.IMAGE_NAME | split(':') | last }} `
+            --wait `
+            --timeout 5m
+          
+          Write-Host "[OK] Helm deployment complete" -ForegroundColor Green
+
+      - name: Verify Helm Release
+        if: ${{ inputs.deployment_method == 'helm' }}
+        run: |
+          helm list -n ${{ env.NAMESPACE }}
+          helm status gists-api -n ${{ env.NAMESPACE }}
+
+      # =======================================================================
+      # MANIFEST DEPLOYMENT (existing working method)
+      # =======================================================================
+      - name: Deploy with Manifests
+        if: ${{ inputs.deployment_method == 'manifest' }}
+        run: |
+          Write-Host "Deploying with raw manifests..." -ForegroundColor Cyan
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/istio-gateway.yaml
+          Write-Host "[OK] Manifest deployment complete" -ForegroundColor Green
+
+      - name: Wait for deployment
+        run: |
+          kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=2m
+          Write-Host "[OK] Deployment ready" -ForegroundColor Green
+
+      # =======================================================================
+      # TLS & GATEWAY SETUP
+      # =======================================================================
+      - name: Generate TLS Certificate
+        shell: cmd
+        run: |
+          kubectl get secret gists-tls-secret -n istio-system >nul 2>&1 && (echo [OK] TLS certificate exists && exit /b 0)
+          echo Generating TLS certificate...
+          echo [req] > cert.conf
+          echo distinguished_name = req_distinguished_name >> cert.conf
+          echo x509_extensions = v3_req >> cert.conf
+          echo prompt = no >> cert.conf
+          echo [req_distinguished_name] >> cert.conf
+          echo CN = gists.kishore.local >> cert.conf
+          echo [v3_req] >> cert.conf
+          echo keyUsage = digitalSignature, keyEncipherment >> cert.conf
+          echo extendedKeyUsage = serverAuth >> cert.conf
+          echo subjectAltName = @alt_names >> cert.conf
+          echo [alt_names] >> cert.conf
+          echo DNS.1 = gists.kishore.local >> cert.conf
+          echo DNS.2 = gists.local >> cert.conf
+          echo DNS.3 = *.local >> cert.conf
+          "C:\Program Files\Git\usr\bin\openssl.exe" req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -config cert.conf -extensions v3_req 2>nul
+          kubectl create secret tls gists-tls-secret --cert=tls.crt --key=tls.key -n istio-system --dry-run=client -o yaml | kubectl apply -f -
+          del cert.conf tls.key tls.crt 2>nul
+          echo [OK] TLS certificate created
+
+      - name: Patch Istio Gateway for LoadBalancer
+        shell: cmd
+        run: |
+          kubectl patch svc istio-ingressgateway -n istio-system -p "{\"spec\":{\"type\":\"LoadBalancer\"}}" --type=merge
+          echo [OK] Istio Gateway patched
+
+      - name: Display Deployment Info
+        run: |
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "DEPLOYMENT SUCCESSFUL!"
+          Write-Host "========================================"
+          Write-Host ""
+          Write-Host "Method: ${{ inputs.deployment_method }}"
+          Write-Host ""
+          Write-Host "Access URLs:"
+          Write-Host "  https://gists.kishore.local/health"
+          Write-Host "  https://gists.kishore.local/{username}"
+          Write-Host ""
+          Write-Host "Verify:"
+          Write-Host "  kubectl get pods -n ${{ env.NAMESPACE }}"
+          Write-Host "  helm list -n ${{ env.NAMESPACE }}"
+          Write-Host ""

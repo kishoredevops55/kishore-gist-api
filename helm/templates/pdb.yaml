@@ -1,0 +1,17 @@
+{{/*
+PodDisruptionBudget - Exact match with k8s/deployment.yaml PDB section
+*/}}
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "github-gists-api.fullname" . }}-pdb
+  namespace: {{ include "github-gists-api.namespace" . }}
+  labels:
+    {{- include "github-gists-api.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app: {{ include "github-gists-api.fullname" . }}
+{{- end }}

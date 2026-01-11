@@ -1,12 +1,34 @@
 apiVersion: v2
 name: github-gists-api
-description: GitHub Gists API service
+description: |
+  GitHub Gists API service with Istio service mesh integration.
+  Full observability stack support (Prometheus, Grafana, Loki, Tempo).
+  Designed for Kind cluster deployment on Windows.
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
+
 keywords:
   - github
+  - gists
   - api
   - fastapi
+  - istio
+  - kubernetes
+  - observability
+  - prometheus
+  - grafana
+
 maintainers:
   - name: Kishore
+    email: kishore@example.com
+
+home: https://github.com/kishore/github-gists-api
+sources:
+  - https://github.com/kishore/github-gists-api
+
+annotations:
+  artifacthub.io/license: MIT
+  artifacthub.io/signKey: |
+    fingerprint: N/A
+    url: N/A

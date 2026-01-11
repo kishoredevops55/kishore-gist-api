@@ -1,46 +1,72 @@
+# =============================================================================
+# GitHub Gists API - Helm Values
+# Mirrors exact working K8s manifest configuration
+# =============================================================================
+
+# Application name override
+nameOverride: ""
+fullnameOverride: "github-gists-api"
+
+# Namespace configuration
+namespace: production
+
+# =============================================================================
+# Deployment Configuration (matches k8s/deployment.yaml exactly)
+# =============================================================================
 replicaCount: 3
 
 image:
-  repository: ghcr.io/github-gists-api
-  pullPolicy: Always
+  repository: github-gists-api
+  pullPolicy: IfNotPresent
   tag: "latest"
 
-service:
-  type: ClusterIP
-  port: 80
-  targetPort: 8080
+imagePullSecrets:
+  - name: dockerhub-secret
 
-ingress:
+# Rolling update strategy (exact match)
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# Pod annotations for Prometheus scraping
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+# Deployment annotations
+deploymentAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+# =============================================================================
+# Container Configuration
+# =============================================================================
+containerPort: 8080
+
+# Environment variables (exact match from working manifest)
+env:
+  PORT: "8080"
+  LOG_LEVEL: "info"
+  OTEL_ENABLED: "true"
+  OTEL_SERVICE_NAME: "github-gists-api"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo.monitoring.svc.cluster.local:4317"
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  ENVIRONMENT: "production"
+
+# GitHub token secret reference
+githubToken:
   enabled: true
-  className: nginx
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-  hosts:
-    - host: gists-api.example.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls:
-    - secretName: gists-api-tls
-      hosts:
-        - gists-api.example.com
+  secretName: github-token
+  secretKey: GITHUB_TOKEN
+  optional: true
 
-resources:
-  limits:
-    cpu: 500m
-    memory: 256Mi
-  requests:
-    cpu: 100m
-    memory: 128Mi
-
-autoscaling:
-  enabled: true
-  minReplicas: 3
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
-
+# =============================================================================
+# Security Context (exact match)
+# =============================================================================
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
@@ -55,14 +81,30 @@ securityContext:
   runAsUser: 1000
   capabilities:
     drop:
-    - ALL
+      - ALL
 
+# =============================================================================
+# Resources (exact match)
+# =============================================================================
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "500m"
+
+# =============================================================================
+# Probes (exact match with all parameters)
+# =============================================================================
 livenessProbe:
   httpGet:
     path: /health
     port: 8080
   initialDelaySeconds: 10
   periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
 
 readinessProbe:
   httpGet:
@@ -70,7 +112,117 @@ readinessProbe:
     port: 8080
   initialDelaySeconds: 5
   periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 2
 
+# =============================================================================
+# Service Configuration (exact match)
+# =============================================================================
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  protocol: TCP
+  name: http
+
+# =============================================================================
+# HPA Configuration (exact match)
+# =============================================================================
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+# =============================================================================
+# PDB Configuration (exact match)
+# =============================================================================
 podDisruptionBudget:
   enabled: true
   minAvailable: 2
+
+# =============================================================================
+# Istio Configuration (exact match from k8s/istio-gateway.yaml)
+# =============================================================================
+istio:
+  enabled: true
+  
+  gateway:
+    name: gists-gateway
+    selector:
+      istio: ingressgateway
+    hosts:
+      - "gists.kishore.local"
+      - "gists.local"
+    tls:
+      enabled: true
+      mode: SIMPLE
+      credentialName: gists-tls-secret
+  
+  virtualService:
+    name: gists-virtualservice
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: connect-failure,refused-stream,unavailable,cancelled,retriable-4xx,reset
+    healthRetries:
+      attempts: 3
+      perTryTimeout: 2s
+  
+  destinationRule:
+    name: gists-destination-rule
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 100
+        http:
+          h2UpgradePolicy: UPGRADE
+          http1MaxPendingRequests: 100
+          http2MaxRequests: 1000
+      loadBalancer:
+        simple: ROUND_ROBIN
+      outlierDetection:
+        consecutive5xxErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 50
+  
+  peerAuthentication:
+    enabled: true
+    mode: STRICT
+  
+  authorizationPolicy:
+    enabled: true
+    allowedNamespaces:
+      - istio-system
+      - production
+    allowedMethods:
+      - GET
+    allowedPaths:
+      - /health
+      - /metrics
+      - /*
+
+# =============================================================================
+# Volume Mounts
+# =============================================================================
+volumes:
+  - name: tmp
+    emptyDir: {}
+
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp

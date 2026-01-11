@@ -1,0 +1,21 @@
+{{/*
+HorizontalPodAutoscaler - Exact match with k8s/deployment.yaml HPA section
+*/}}
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "github-gists-api.fullname" . }}-hpa
+  namespace: {{ include "github-gists-api.namespace" . }}
+  labels:
+    {{- include "github-gists-api.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "github-gists-api.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+  {{- toYaml .Values.autoscaling.metrics | nindent 2 }}
+{{- end }}
