@@ -26,9 +26,25 @@ jobs:
     runs-on: [self-hosted, Windows, X64]
     env:
       CLUSTER_NAME: kind-tf
+    outputs:
+      cluster_name: ${{ steps.set-outputs.outputs.cluster_name }}
+      kubeconfig_path: ${{ steps.set-outputs.outputs.kubeconfig_path }}
+      kubectl_context: ${{ steps.set-outputs.outputs.kubectl_context }}
     
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check existing Kind cluster
+        id: check-kind
+        run: |
+          $exists = kind get clusters 2>$null | Select-String -Pattern "^${{ env.CLUSTER_NAME }}$"
+          if ($exists) {
+            Write-Host "[INFO] Kind cluster '${{ env.CLUSTER_NAME }}' already exists; Terraform provisioning will be skipped" -ForegroundColor Yellow
+            echo "exists=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            Write-Host "[OK] No existing cluster named '${{ env.CLUSTER_NAME }}' found; Terraform will create it" -ForegroundColor Green
+            echo "exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
       
       - name: Setup Terraform
         run: |
@@ -41,20 +57,17 @@ jobs:
           }
 
       - name: Terraform Init
+        if: steps.check-kind.outputs.exists == 'false'
         working-directory: terraform
         run: terraform init
 
       - name: Terraform Apply (Kind cluster only)
+        if: steps.check-kind.outputs.exists == 'false'
         working-directory: terraform
-        run: |
-          $exists = kind get clusters 2>$null | Select-String -Pattern "^${{ env.CLUSTER_NAME }}$"
-          if ($exists) {
-            Write-Host "[INFO] Kind cluster '${{ env.CLUSTER_NAME }}' already exists; skipping create" -ForegroundColor Yellow
-          } else {
-            terraform apply -auto-approve -target="kind_cluster.dev"
-          }
+        run: terraform apply -auto-approve -target="kind_cluster.dev"
 
       - name: Terraform Apply (MetalLB chart for CRDs)
+        if: steps.check-kind.outputs.exists == 'false'
         working-directory: terraform
         run: |
           helm repo add metallb https://metallb.github.io/metallb
@@ -62,8 +75,34 @@ jobs:
           terraform apply -auto-approve -target="helm_release.metallb"
 
       - name: Terraform Apply (Full stack)
+        if: steps.check-kind.outputs.exists == 'false'
         working-directory: terraform
         run: terraform apply -auto-approve
+
+      - name: Set outputs for downstream jobs
+        id: set-outputs
+        shell: pwsh
+        run: |
+          $clusterName = "${{ env.CLUSTER_NAME }}"
+          $kubeconfig = ""
+          $context = ""
+
+          if (Test-Path "terraform/terraform.tfstate") {
+            try {
+              $tfOut = terraform -chdir=terraform output -json 2>$null | ConvertFrom-Json
+              if ($tfOut.cluster_name.value) { $clusterName = $tfOut.cluster_name.value }
+              if ($tfOut.kubeconfig_path.value) { $kubeconfig = $tfOut.kubeconfig_path.value }
+              if ($tfOut.kubectl_context.value) { $context = $tfOut.kubectl_context.value }
+            } catch {
+              Write-Host "[WARN] Unable to read terraform outputs; using defaults" -ForegroundColor Yellow
+            }
+          }
+
+          if (-not $context) { $context = "kind-$clusterName" }
+
+          "cluster_name=$clusterName"    | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "kubeconfig_path=$kubeconfig" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "kubectl_context=$context"     | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Output Cluster Info
         working-directory: terraform
@@ -79,8 +118,9 @@ jobs:
     if: always() && (needs.terraform-provision.result == 'success' || needs.terraform-provision.result == 'skipped')
     runs-on: [self-hosted, Windows, X64]
     env:
-      CLUSTER_NAME: kind-dev
-      CONTEXT_NAME: kind-kind-dev
+      CLUSTER_NAME: ${{ needs.terraform-provision.outputs.cluster_name != '' && needs.terraform-provision.outputs.cluster_name || 'kind-dev' }}
+      CONTEXT_NAME: ${{ needs.terraform-provision.outputs.kubectl_context != '' && needs.terraform-provision.outputs.kubectl_context || 'kind-kind-dev' }}
+      KUBECONFIG_PATH: ${{ needs.terraform-provision.outputs.kubeconfig_path }}
       IMAGE_NAME: github-gists-api:latest
       NAMESPACE: production
       CUSTOM_DNS: gists.kishore.local
@@ -90,6 +130,10 @@ jobs:
       
       - name: Setup cluster context
         run: |
+          if ($env:KUBECONFIG_PATH) {
+            Write-Host "[INFO] Using kubeconfig from Terraform: $env:KUBECONFIG_PATH" -ForegroundColor Yellow
+            $env:KUBECONFIG = $env:KUBECONFIG_PATH
+          }
           kubectl config use-context ${{ env.CONTEXT_NAME }}
           Write-Host "[OK] Context set" -ForegroundColor Green
 
