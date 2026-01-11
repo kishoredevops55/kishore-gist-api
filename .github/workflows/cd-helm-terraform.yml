@@ -190,6 +190,18 @@ jobs:
       # =======================================================================
       # HELM DEPLOYMENT
       # =======================================================================
+      - name: Clean up kubectl-managed resources
+        if: ${{ inputs.deployment_method == 'helm' }}
+        run: |
+          $deployment = kubectl get deployment github-gists-api -n ${{ env.NAMESPACE }} --ignore-not-found
+          if ($deployment) {
+            $managedBy = kubectl get deployment github-gists-api -n ${{ env.NAMESPACE }} -o jsonpath='{.metadata.annotations.app\.kubernetes\.io/managed-by}'
+            if ($managedBy -ne 'Helm') {
+              Write-Host "[INFO] Removing kubectl-managed deployment to avoid conflicts" -ForegroundColor Yellow
+              kubectl delete deployment github-gists-api -n ${{ env.NAMESPACE }}
+            }
+          }
+
       - name: Deploy with Helm
         if: ${{ inputs.deployment_method == 'helm' }}
         run: |
@@ -199,7 +211,6 @@ jobs:
           helm upgrade --install gists-api ./helm `
             --namespace ${{ env.NAMESPACE }} `
             --values ./helm/values-kind.yaml `
-            --force `
             --wait `
             --timeout 5m
           
