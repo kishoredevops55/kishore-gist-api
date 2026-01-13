@@ -7,6 +7,10 @@ on:
         description: "Why are you running CI?"
         required: false
         default: "manual-run"
+      custom_image_tag:
+        description: "Custom Image Tag (Optional)"
+        required: false
+        type: string
 
 jobs:
   lint-and-test:
@@ -100,6 +104,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/github-gists-api
           tags: |
+            type=raw,value=${{ inputs.custom_image_tag }},enable=${{ inputs.custom_image_tag != '' }}
             type=ref,event=branch
             type=ref,event=pr
             type=sha,prefix={{branch}}-

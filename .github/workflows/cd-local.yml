@@ -2,6 +2,11 @@ name: CD Pipeline (Local Kind Cluster)
 
 on:
   workflow_dispatch:
+    inputs:
+      custom_image_tag:
+        description: 'Custom Image Tag (Optional)'
+        required: false
+        type: string
 
 jobs:
   deploy-to-kind:
@@ -23,15 +28,28 @@ jobs:
 
       - name: Build and load image
         run: |
-          docker build -t ${{ env.IMAGE_NAME }} .
-          kind load docker-image ${{ env.IMAGE_NAME }} --name ${{ env.CLUSTER_NAME }}
-          Write-Host "[OK] Image built and loaded" -ForegroundColor Green
+          $imgName = "${{ env.IMAGE_NAME }}"
+          if ("${{ inputs.custom_image_tag }}") {
+             $imgName = "github-gists-api:${{ inputs.custom_image_tag }}"
+             Write-Host "Using custom image tag: ${{ inputs.custom_image_tag }}" -ForegroundColor Yellow
+          }
+
+          docker build -t $imgName .
+          kind load docker-image $imgName --name ${{ env.CLUSTER_NAME }}
+          Write-Host "[OK] Image built and loaded: $imgName" -ForegroundColor Green
 
       - name: Deploy application
         run: |
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
           kubectl label namespace ${{ env.NAMESPACE }} istio-injection=enabled --overwrite
+          
           kubectl apply -f k8s/deployment.yaml
+          
+          if ("${{ inputs.custom_image_tag }}") {
+             Write-Host "Updating deployment image to: github-gists-api:${{ inputs.custom_image_tag }}" -ForegroundColor Yellow
+             kubectl set image deployment/github-gists-api api=github-gists-api:${{ inputs.custom_image_tag }} -n ${{ env.NAMESPACE }}
+          }
+
           kubectl rollout status deployment/github-gists-api -n ${{ env.NAMESPACE }} --timeout=2m
           Write-Host "[OK] Application deployed" -ForegroundColor Green
 
