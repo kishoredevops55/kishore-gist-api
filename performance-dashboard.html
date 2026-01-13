@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Gists API - Performance Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+            animation: fadeIn 0.8s ease-in;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            animation: slideUp 0.6s ease-out;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+        }
+
+        .stat-card h3 {
+            font-size: 0.9em;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+
+        .stat-card .value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .label {
+            font-size: 0.9em;
+            color: #999;
+        }
+
+        .test-section {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            animation: fadeIn 0.8s ease-in;
+        }
+
+        .test-section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .endpoint-selector {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+
+        .endpoint-btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .endpoint-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .endpoint-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .test-btn {
+            padding: 15px 40px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1.1em;
+            font-weight: 600;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+            transition: all 0.3s ease;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        .test-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 7px 25px rgba(102, 126, 234, 0.6);
+        }
+
+        .test-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .results {
+            margin-top: 25px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .result-item {
+            padding: 15px;
+            margin-bottom: 12px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #ddd;
+            animation: slideIn 0.4s ease-out;
+        }
+
+        .result-item.success {
+            border-left-color: #28a745;
+        }
+
+        .result-item.cache-hit {
+            border-left-color: #17a2b8;
+            background: #e7f9fc;
+        }
+
+        .result-item.cache-miss {
+            border-left-color: #ffc107;
+            background: #fff9e6;
+        }
+
+        .result-item.error {
+            border-left-color: #dc3545;
+            background: #ffe6e6;
+        }
+
+        .result-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .result-detail {
+            font-size: 0.9em;
+            color: #666;
+            margin: 5px 0;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .badge.hit {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge.miss {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .badge.fast {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .badge.slow {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .comparison-chart {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+        }
+
+        .chart-bar {
+            flex: 1;
+            text-align: center;
+        }
+
+        .bar-container {
+            height: 200px;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            margin-bottom: 10px;
+        }
+
+        .bar {
+            width: 60px;
+            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px 8px 0 0;
+            position: relative;
+            transition: height 0.5s ease;
+        }
+
+        .bar-label {
+            position: absolute;
+            top: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-weight: 600;
+            color: #667eea;
+            white-space: nowrap;
+        }
+
+        .chart-label {
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 15px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+        }
+
+        .highlight {
+            background: linear-gradient(120deg, #84fab0 0%, #8fd3f4 100%);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .speed-comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .speed-box {
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .speed-box.without-cache {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .speed-box.with-cache {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+        .speed-box .time {
+            font-size: 3em;
+            font-weight: bold;
+            margin: 15px 0;
+        }
+
+        .speed-box .label {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .improvement {
+            text-align: center;
+            margin-top: 20px;
+            padding: 15px;
+            background: #d4edda;
+            border-radius: 10px;
+            color: #155724;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+
+        .traffic-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .traffic-dot {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            color: white;
+            animation: pulse 0.5s ease-out;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(0.8);
+                opacity: 0;
+            }
+            50% {
+                transform: scale(1.1);
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .traffic-dot.success {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .traffic-dot.error {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 GitHub Gists API Performance Dashboard</h1>
+            <p>Real-time Performance Testing & Monitoring</p>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Requests</h3>
+                <div class="value" id="totalRequests">0</div>
+                <div class="label">Processed</div>
+            </div>
+            <div class="stat-card">
+                <h3>Cache Hit Rate</h3>
+                <div class="value" id="cacheHitRate">0%</div>
+                <div class="label">Efficiency</div>
+            </div>
+            <div class="stat-card">
+                <h3>Avg Response Time</h3>
+                <div class="value" id="avgResponse">0ms</div>
+                <div class="label">Performance</div>
+            </div>
+            <div class="stat-card">
+                <h3>Success Rate</h3>
+                <div class="value" id="successRate">100%</div>
+                <div class="label">Reliability</div>
+            </div>
+        </div>
+
+        <!-- Cache Performance Test -->
+        <div class="test-section">
+            <h2>⚡ Cache Performance Test</h2>
+            <div class="endpoint-selector">
+                <button class="endpoint-btn active" data-url="http://localhost:8080">
+                    Localhost
+                </button>
+                <button class="endpoint-btn" data-url="https://gists.kishore.local">
+                    Production Domain
+                </button>
+            </div>
+            
+            <button class="test-btn" onclick="runCacheTest()">Run Cache Test</button>
+            <button class="test-btn" onclick="clearResults('cacheResults')">Clear Results</button>
+            
+            <div id="cacheComparison"></div>
+            <div id="cacheResults" class="results" style="display: none;"></div>
+        </div>
+
+        <!-- Load Balancing Test -->
+        <div class="test-section">
+            <h2>🔄 Load Balancing & Traffic Test</h2>
+            
+            <button class="test-btn" onclick="runLoadTest(10)">10 Requests</button>
+            <button class="test-btn" onclick="runLoadTest(50)">50 Requests</button>
+            <button class="test-btn" onclick="runLoadTest(100)">100 Requests</button>
+            <button class="test-btn" onclick="clearResults('loadResults')">Clear Results</button>
+            
+            <div id="loadResults" class="results" style="display: none;"></div>
+            <div id="trafficGrid" class="traffic-grid"></div>
+        </div>
+
+        <!-- GitHub Integration Test -->
+        <div class="test-section">
+            <h2>🐙 GitHub API Integration Test</h2>
+            
+            <button class="test-btn" onclick="testUser('octocat')">Test: octocat</button>
+            <button class="test-btn" onclick="testUser('torvalds')">Test: torvalds</button>
+            <button class="test-btn" onclick="testUser('gvanrossum')">Test: gvanrossum</button>
+            <button class="test-btn" onclick="clearResults('githubResults')">Clear Results</button>
+            
+            <div id="githubResults" class="results" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentEndpoint = 'http://localhost:8080';
+        let stats = {
+            totalRequests: 0,
+            cacheHits: 0,
+            totalTime: 0,
+            successCount: 0
+        };
+
+        // Endpoint selector
+        document.querySelectorAll('.endpoint-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.endpoint-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentEndpoint = this.dataset.url;
+            });
+        });
+
+        function updateStats() {
+            document.getElementById('totalRequests').textContent = stats.totalRequests;
+            
+            const hitRate = stats.totalRequests > 0 
+                ? Math.round((stats.cacheHits / stats.totalRequests) * 100) 
+                : 0;
+            document.getElementById('cacheHitRate').textContent = hitRate + '%';
+            
+            const avgTime = stats.totalRequests > 0 
+                ? Math.round(stats.totalTime / stats.totalRequests) 
+                : 0;
+            document.getElementById('avgResponse').textContent = avgTime + 'ms';
+            
+            const successRate = stats.totalRequests > 0 
+                ? Math.round((stats.successCount / stats.totalRequests) * 100) 
+                : 100;
+            document.getElementById('successRate').textContent = successRate + '%';
+        }
+
+        async function makeRequest(username = 'octocat') {
+            const startTime = performance.now();
+            try {
+                const response = await fetch(`${currentEndpoint}/${username}`);
+                const elapsed = performance.now() - startTime;
+                const data = await response.json();
+                
+                stats.totalRequests++;
+                stats.totalTime += elapsed;
+                
+                if (response.ok) {
+                    stats.successCount++;
+                    if (data.cache && data.cache.hit) {
+                        stats.cacheHits++;
+                    }
+                }
+                
+                updateStats();
+                
+                return {
+                    success: response.ok,
+                    time: elapsed,
+                    data: data,
+                    status: response.status
+                };
+            } catch (error) {
+                stats.totalRequests++;
+                stats.totalTime += (performance.now() - startTime);
+                updateStats();
+                
+                return {
+                    success: false,
+                    time: performance.now() - startTime,
+                    error: error.message
+                };
+            }
+        }
+
+        async function runCacheTest() {
+            const resultsDiv = document.getElementById('cacheResults');
+            const comparisonDiv = document.getElementById('cacheComparison');
+            resultsDiv.style.display = 'block';
+            resultsDiv.innerHTML = '<div class="spinner"></div>';
+            comparisonDiv.innerHTML = '';
+
+            // First request (cache miss)
+            const result1 = await makeRequest('octocat');
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Second request (cache hit)
+            const result2 = await makeRequest('octocat');
+
+            const speedup = result1.time / result2.time;
+
+            resultsDiv.innerHTML = `
+                <div class="result-item ${result1.success ? 'cache-miss' : 'error'}">
+                    <div class="result-title">
+                        Request 1: Direct GitHub API Call
+                        <span class="badge miss">CACHE MISS</span>
+                        <span class="badge slow">${Math.round(result1.time)}ms</span>
+                    </div>
+                    <div class="result-detail">⏱️ Response Time: <strong>${result1.time.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">📊 Status: <strong>${result1.status || 'Error'}</strong></div>
+                    <div class="result-detail">💾 Cache: <strong>Not Cached (First request)</strong></div>
+                    ${result1.success ? `<div class="result-detail">📦 Gists Fetched: <strong>${result1.data.data?.length || 0}</strong></div>` : ''}
+                </div>
+
+                <div class="result-item ${result2.success ? 'cache-hit' : 'error'}">
+                    <div class="result-title">
+                        Request 2: Served from Cache
+                        <span class="badge hit">CACHE HIT</span>
+                        <span class="badge fast">${Math.round(result2.time)}ms</span>
+                    </div>
+                    <div class="result-detail">⚡ Response Time: <strong>${result2.time.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">📊 Status: <strong>${result2.status || 'Error'}</strong></div>
+                    <div class="result-detail">💾 Cache: <strong>Served from Memory Cache</strong></div>
+                    ${result2.success ? `<div class="result-detail">📦 Gists Fetched: <strong>${result2.data.data?.length || 0}</strong></div>` : ''}
+                </div>
+            `;
+
+            comparisonDiv.innerHTML = `
+                <div class="speed-comparison">
+                    <div class="speed-box without-cache">
+                        <div class="label">🐢 Without Cache</div>
+                        <div class="time">${Math.round(result1.time)}ms</div>
+                        <div class="label">Direct GitHub API</div>
+                    </div>
+                    <div class="speed-box with-cache">
+                        <div class="label">⚡ With Cache</div>
+                        <div class="time">${Math.round(result2.time)}ms</div>
+                        <div class="label">Memory Cache</div>
+                    </div>
+                </div>
+                <div class="improvement">
+                    🚀 Performance Improvement: <span class="highlight">${speedup.toFixed(1)}x FASTER</span> with caching!
+                </div>
+            `;
+        }
+
+        async function runLoadTest(count) {
+            const resultsDiv = document.getElementById('loadResults');
+            const trafficGrid = document.getElementById('trafficGrid');
+            resultsDiv.style.display = 'block';
+            resultsDiv.innerHTML = `<div class="spinner"></div><p style="text-align: center; margin-top: 10px;">Running ${count} concurrent requests...</p>`;
+            trafficGrid.innerHTML = '';
+
+            const startTime = performance.now();
+            const promises = [];
+            
+            for (let i = 0; i < count; i++) {
+                promises.push(makeRequest('octocat').then(result => {
+                    const dot = document.createElement('div');
+                    dot.className = `traffic-dot ${result.success ? 'success' : 'error'}`;
+                    dot.textContent = Math.round(result.time);
+                    dot.title = `Request ${i+1}: ${Math.round(result.time)}ms`;
+                    trafficGrid.appendChild(dot);
+                    return result;
+                }));
+            }
+
+            const results = await Promise.all(promises);
+            const totalTime = performance.now() - startTime;
+            
+            const successful = results.filter(r => r.success).length;
+            const times = results.filter(r => r.success).map(r => r.time);
+            const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
+            const minTime = Math.min(...times);
+            const maxTime = Math.max(...times);
+            const throughput = (count / (totalTime / 1000)).toFixed(1);
+
+            resultsDiv.innerHTML = `
+                <div class="result-item success">
+                    <div class="result-title">⚡ Load Test Results: ${count} Requests</div>
+                    <div class="result-detail">✅ Successful: <strong>${successful}/${count}</strong></div>
+                    <div class="result-detail">⏱️ Total Time: <strong>${totalTime.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">📊 Average Response: <strong>${avgTime.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">⚡ Min Response: <strong>${minTime.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">🐢 Max Response: <strong>${maxTime.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">🚀 Throughput: <strong class="highlight">${throughput} requests/second</strong></div>
+                </div>
+            `;
+        }
+
+        async function testUser(username) {
+            const resultsDiv = document.getElementById('githubResults');
+            resultsDiv.style.display = 'block';
+            
+            const loadingItem = document.createElement('div');
+            loadingItem.className = 'result-item';
+            loadingItem.innerHTML = `<div class="spinner"></div><p style="text-align: center;">Fetching ${username}...</p>`;
+            resultsDiv.insertBefore(loadingItem, resultsDiv.firstChild);
+
+            const result = await makeRequest(username);
+
+            loadingItem.remove();
+
+            const resultItem = document.createElement('div');
+            resultItem.className = `result-item ${result.success ? (result.data.cache?.hit ? 'cache-hit' : 'cache-miss') : 'error'}`;
+            
+            if (result.success) {
+                const cacheHit = result.data.cache?.hit || false;
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        👤 ${username}
+                        <span class="badge ${cacheHit ? 'hit' : 'miss'}">${cacheHit ? 'CACHE HIT' : 'CACHE MISS'}</span>
+                        <span class="badge ${result.time < 50 ? 'fast' : 'slow'}">${Math.round(result.time)}ms</span>
+                    </div>
+                    <div class="result-detail">⏱️ Response Time: <strong>${result.time.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">📦 Gists Found: <strong>${result.data.data?.length || 0}</strong></div>
+                    <div class="result-detail">💾 Cache: <strong>${cacheHit ? 'Served from cache' : 'Fresh from GitHub API'}</strong></div>
+                    <div class="result-detail">📄 Page: <strong>${result.data.pagination?.page || 1}</strong></div>
+                `;
+            } else {
+                resultItem.innerHTML = `
+                    <div class="result-title">❌ Error: ${username}</div>
+                    <div class="result-detail">⚠️ ${result.error || 'Request failed'}</div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        function clearResults(divId) {
+            const div = document.getElementById(divId);
+            div.innerHTML = '';
+            div.style.display = 'none';
+            
+            if (divId === 'cacheResults') {
+                document.getElementById('cacheComparison').innerHTML = '';
+            }
+            if (divId === 'loadResults') {
+                document.getElementById('trafficGrid').innerHTML = '';
+            }
+        }
+
+        // Initialize
+        updateStats();
+    </script>
+</body>
+</html>

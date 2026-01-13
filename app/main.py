@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Path, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
@@ -197,6 +198,15 @@ app = FastAPI(
     description="Fetch public gists for any GitHub user",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# Add CORS middleware to allow browser requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
