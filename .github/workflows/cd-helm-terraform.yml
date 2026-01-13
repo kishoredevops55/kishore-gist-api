@@ -142,9 +142,15 @@ jobs:
 
       - name: Build and load image
         run: |
-          docker build -t ${{ env.IMAGE_NAME }} .
-          kind load docker-image ${{ env.IMAGE_NAME }} --name ${{ env.CLUSTER_NAME }}
-          Write-Host "[OK] Image built and loaded" -ForegroundColor Green
+          $imgName = "${{ env.IMAGE_NAME }}"
+          if ("${{ inputs.custom_image_tag }}") {
+             $imgName = "github-gists-api:${{ inputs.custom_image_tag }}"
+             Write-Host "Using custom image tag for build: ${{ inputs.custom_image_tag }}" -ForegroundColor Yellow
+          }
+
+          docker build -t $imgName .
+          kind load docker-image $imgName --name ${{ env.CLUSTER_NAME }}
+          Write-Host "[OK] Image built and loaded: $imgName" -ForegroundColor Green
 
       - name: Create namespace with Istio injection
         run: |
