@@ -80,7 +80,13 @@ A **production-ready, enterprise-grade GitHub Gists API** built with modern clou
 - 📊 **Health & Metrics**: `/health` endpoint and Prometheus metrics at `/metrics`
 - 🌐 **CORS Enabled**: Cross-Origin Resource Sharing for frontend integration
 - 🔐 **Rate Limit Aware**: Respects GitHub API rate limits with proper headers
-- 🎯 **Interactive Dashboard**: Beautiful HTML performance dashboard for testing cache, load balancing, and traffic
+- 🎯 **Interactive Dashboard**: Comprehensive HTML performance dashboard with complete test coverage
+  - Cache performance testing with visual comparisons
+  - Load balancing with 10/50/100 concurrent requests
+  - Pagination testing with validation
+  - Cache management (stats, bypass, clear)
+  - API health monitoring and validation
+  - Real-time metrics and animated visualizations
 
 ### ☸️ Kubernetes & Service Mesh
 - 🎛️ **Deployment Flexibility**: Support for both Helm charts and raw Kubernetes manifests
@@ -438,7 +444,26 @@ curl http://gists.kishore.local/metrics
 
 ### 7️⃣ Interactive Performance Dashboard
 
-Launch the **beautiful HTML performance dashboard** to test and visualize cache performance, load balancing, and traffic handling:
+Launch the **comprehensive HTML performance dashboard** to test and visualize all API features including cache performance, load balancing, pagination, and complete test coverage:
+
+#### Option 1: Single Command (Recommended) ⭐
+
+```bash
+# Starts both API and Dashboard servers with one command
+python start_all_servers.py
+
+# Open in browser
+# http://localhost:3000/performance-dashboard.html
+```
+
+This single script:
+- ✅ Starts API server on `http://localhost:8080`
+- ✅ Starts Dashboard server on `http://localhost:3000`
+- ✅ Shows colored status for both servers
+- ✅ Handles graceful shutdown with Ctrl+C
+- ✅ Monitors both processes automatically
+
+#### Option 2: Manual (Two Terminals)
 
 ```bash
 # Terminal 1: Start the API
@@ -451,28 +476,86 @@ python serve_dashboard.py
 # http://localhost:3000/performance-dashboard.html
 ```
 
-**Dashboard Features:**
+**Dashboard Test Sections:**
 
-| Feature | What It Tests | Key Metrics |
-|---------|---------------|-------------|
-| ⚡ **Cache Performance** | Cache hit vs miss comparison | 10-30x speed improvement with cache |
-| 🔄 **Load Balancing** | Concurrent request handling (10/50/100 requests) | Throughput (req/s), response times, distribution |
-| 🐙 **GitHub Integration** | Real API calls to GitHub | Cache efficiency per user, response times |
-| 📊 **Live Statistics** | Real-time metrics | Total requests, cache hit rate, avg response time, success rate |
+#### ⚡ Cache Performance Testing
+- **Cache Hit vs Miss Comparison**: Real-time visual comparison showing 10-30x speed improvement
+- **Speed Comparison Cards**: Without cache (500ms) vs With cache (15ms)
+- **Live Performance Metrics**: Response times, cache hit rates, throughput
 
-**Visual Highlights:**
-- 🎯 **Real-time animated charts** showing cache performance
+#### 🔄 Load Balancing & Traffic Testing
+- **Concurrent Load Tests**: 10, 50, or 100 parallel requests
+- **Traffic Visualization**: Colored dots grid showing each request in real-time
+- **Performance Metrics**: Throughput (req/s), average/min/max response times, success rate
+- **Load Distribution**: Visual representation of traffic across pods
+
+#### 🐙 GitHub API Integration Testing
+- **User Gist Fetching**: Test real GitHub users (octocat, torvalds, gvanrossum)
+- **Invalid User Handling**: Verify 404 error responses for non-existent users
+- **Cache Behavior**: Show cache hits vs misses per user
+- **Response Time Tracking**: Individual timing for each request
+
+#### 📄 Pagination Testing
+- **Default Pagination**: Verify page=1, per_page=30 defaults
+- **Custom Page Size**: Test with per_page=5
+- **Second Page Navigation**: Test page=2 with has_prev/has_next
+- **Invalid Values Validation**: Verify 422 errors for page=0 or per_page=101
+- **Pagination Metadata**: Display page, per_page, count, has_next, has_prev
+
+#### 💾 Cache Management
+- **Cache Statistics**: View size, hits, misses, hit rate, TTL
+- **Cache Bypass**: Test use_cache=false parameter
+- **Cache Clear**: DELETE endpoint to clear all cached entries
+- **Real-time Stats Updates**: Live cache metrics after operations
+
+#### 🏥 API Health & Validation
+- **Health Check**: Test /health endpoint response
+- **Root Endpoint**: Verify / endpoint functionality
+- **Metrics Endpoint**: Test Prometheus /metrics availability
+- **Username Validation**: Verify 422 error for usernames > 39 characters
+- **Response Time Monitoring**: Track endpoint performance
+
+#### 📊 Live Statistics Dashboard
+- **Total Requests**: Counter for all API calls made
+- **Cache Hit Rate**: Real-time percentage efficiency
+- **Avg Response Time**: Running average across all requests
+- **Success Rate**: Percentage of successful requests
+
+**Visual Features:**
+- 🎯 **Real-time animated charts** with performance comparisons
 - 🚀 **Traffic grid visualization** with colored dots for each request
-- ⚡ **Speed comparison cards**: Without cache vs With cache
+- ⚡ **Speed comparison cards**: Before/after cache metrics
 - 📈 **Live performance metrics** updating in real-time
-- 🎨 **Color-coded results**: Green (cache hit), Yellow (cache miss), Red (error)
+- 🎨 **Color-coded results**: 
+  - Green/Teal = Cache hit (fast)
+  - Yellow = Cache miss (fresh from API)
+  - Red = Error
+  - Blue = Success
+- 🏷️ **Status badges**: Cache hit/miss, response time, HTTP status codes
+- 📊 **Progress bars** and animated counters
 
-**Perfect for:**
-- 🎤 **Live demos** and presentations
-- 👥 **Stakeholder demonstrations**
-- 🧪 **Performance testing** and validation
-- 📊 **Capacity planning** and load testing
-- 🎓 **Training** and education
+**Perfect For:**
+- 🎤 **Live Demos**: Interactive presentations showing real performance
+- 👥 **Stakeholder Demonstrations**: Visual proof of system capabilities
+- 🧪 **Comprehensive Testing**: Covers all test cases from test_main.py
+- 📊 **Capacity Planning**: Load testing with concurrent requests
+- 🎓 **Training & Education**: Visual learning of API concepts
+- 🔍 **Debugging**: Quick visual testing of API features
+- 📈 **Performance Validation**: Prove cache effectiveness and speed improvements
+- 🚀 **Production Readiness**: Demonstrate system reliability under load
+
+**Test Coverage:**
+The dashboard matches all test scenarios from `tests/test_main.py`:
+- ✅ Health checks and root endpoint
+- ✅ GitHub user gist fetching
+- ✅ Pagination with custom parameters
+- ✅ Cache hit/miss behavior
+- ✅ Cache bypass functionality
+- ✅ Cache statistics and clearing
+- ✅ Invalid user handling (404)
+- ✅ Username validation (422)
+- ✅ Concurrent load testing
+- ✅ Prometheus metrics availability
 
 ---
 

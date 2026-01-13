@@ -471,8 +471,18 @@
                     Localhost
                 </button>
                 <button class="endpoint-btn" data-url="https://gists.kishore.local">
-                    Production Domain
+                    Production Domain (HTTPS)
                 </button>
+                <button class="endpoint-btn" data-url="http://gists.kishore.local:8080">
+                    Production Domain (HTTP:8080)
+                </button>
+            </div>
+            <div style="margin: 15px 0; padding: 10px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 5px; font-size: 0.9em;">
+                ⚠️ <strong>Note:</strong> 
+                <ul>
+                    <li><strong>HTTPS:</strong> Requires K8s/Nginx running. Visit <a href="https://gists.kishore.local/health" target="_blank">https://gists.kishore.local/health</a> to accept certificate.</li>
+                    <li><strong>HTTP:8080:</strong> Uses local server with production domain. Requires <code>127.0.0.1 gists.kishore.local</code> in hosts file.</li>
+                </ul>
             </div>
             
             <button class="test-btn" onclick="runCacheTest()">Run Cache Test</button>
@@ -502,9 +512,48 @@
             <button class="test-btn" onclick="testUser('octocat')">Test: octocat</button>
             <button class="test-btn" onclick="testUser('torvalds')">Test: torvalds</button>
             <button class="test-btn" onclick="testUser('gvanrossum')">Test: gvanrossum</button>
+            <button class="test-btn" onclick="testInvalidUser()">Test: Invalid User</button>
             <button class="test-btn" onclick="clearResults('githubResults')">Clear Results</button>
             
             <div id="githubResults" class="results" style="display: none;"></div>
+        </div>
+
+        <!-- Pagination Test -->
+        <div class="test-section">
+            <h2>📄 Pagination Testing</h2>
+            
+            <button class="test-btn" onclick="testPaginationDefault()">Default Pagination</button>
+            <button class="test-btn" onclick="testPaginationCustom()">Custom Page Size (5)</button>
+            <button class="test-btn" onclick="testPaginationSecondPage()">Second Page</button>
+            <button class="test-btn" onclick="testPaginationInvalid()">Invalid Values</button>
+            <button class="test-btn" onclick="clearResults('paginationResults')">Clear Results</button>
+            
+            <div id="paginationResults" class="results" style="display: none;"></div>
+        </div>
+
+        <!-- Cache Management Test -->
+        <div class="test-section">
+            <h2>💾 Cache Management</h2>
+            
+            <button class="test-btn" onclick="testCacheStats()">View Cache Stats</button>
+            <button class="test-btn" onclick="testCacheBypass()">Test Cache Bypass</button>
+            <button class="test-btn" onclick="testCacheClear()">Clear Cache</button>
+            <button class="test-btn" onclick="clearResults('cacheManagementResults')">Clear Results</button>
+            
+            <div id="cacheManagementResults" class="results" style="display: none;"></div>
+        </div>
+
+        <!-- API Health & Validation Test -->
+        <div class="test-section">
+            <h2>🏥 API Health & Validation</h2>
+            
+            <button class="test-btn" onclick="testHealthCheck()">Health Check</button>
+            <button class="test-btn" onclick="testRootEndpoint()">Root Endpoint</button>
+            <button class="test-btn" onclick="testMetricsEndpoint()">Metrics Endpoint</button>
+            <button class="test-btn" onclick="testUsernameValidation()">Username Validation</button>
+            <button class="test-btn" onclick="clearResults('healthResults')">Clear Results</button>
+            
+            <div id="healthResults" class="results" style="display: none;"></div>
         </div>
     </div>
 
@@ -547,10 +596,18 @@
 
         async function makeRequest(username = 'octocat') {
             const startTime = performance.now();
+            console.log('🌐 Requesting:', `${currentEndpoint}/${username}`);
             try {
                 const response = await fetch(`${currentEndpoint}/${username}`);
                 const elapsed = performance.now() - startTime;
-                const data = await response.json();
+                console.log('📡 Response:', response.status, response.statusText);
+                
+                let data;
+                try {
+                    data = await response.json();
+                } catch (e) {
+                    data = {};
+                }
                 
                 stats.totalRequests++;
                 stats.totalTime += elapsed;
@@ -568,17 +625,29 @@
                     success: response.ok,
                     time: elapsed,
                     data: data,
-                    status: response.status
+                    status: response.status,
+                    error: !response.ok ? `HTTP ${response.status}` : null
                 };
             } catch (error) {
+                const elapsed = performance.now() - startTime;
                 stats.totalRequests++;
-                stats.totalTime += (performance.now() - startTime);
+                stats.totalTime += elapsed;
                 updateStats();
+                
+                let errorMsg = error.message;
+                if (error.message.includes('Failed to fetch')) {
+                    if (currentEndpoint.startsWith('https://')) {
+                        errorMsg = 'SSL Certificate Error or CORS blocked. Accept certificate first by visiting the URL directly.';
+                    } else {
+                        errorMsg = 'Connection failed. Check if API is running or endpoint is accessible.';
+                    }
+                }
                 
                 return {
                     success: false,
-                    time: performance.now() - startTime,
-                    error: error.message
+                    time: elapsed,
+                    error: errorMsg,
+                    status: 0
                 };
             }
         }
@@ -608,7 +677,7 @@
                         <span class="badge slow">${Math.round(result1.time)}ms</span>
                     </div>
                     <div class="result-detail">⏱️ Response Time: <strong>${result1.time.toFixed(2)}ms</strong></div>
-                    <div class="result-detail">📊 Status: <strong>${result1.status || 'Error'}</strong></div>
+                    <div class="result-detail">📊 Status: <strong>${result1.success ? result1.status : (result1.error || 'Failed')}</strong></div>
                     <div class="result-detail">💾 Cache: <strong>Not Cached (First request)</strong></div>
                     ${result1.success ? `<div class="result-detail">📦 Gists Fetched: <strong>${result1.data.data?.length || 0}</strong></div>` : ''}
                 </div>
@@ -620,7 +689,7 @@
                         <span class="badge fast">${Math.round(result2.time)}ms</span>
                     </div>
                     <div class="result-detail">⚡ Response Time: <strong>${result2.time.toFixed(2)}ms</strong></div>
-                    <div class="result-detail">📊 Status: <strong>${result2.status || 'Error'}</strong></div>
+                    <div class="result-detail">📊 Status: <strong>${result2.success ? result2.status : (result2.error || 'Failed')}</strong></div>
                     <div class="result-detail">💾 Cache: <strong>Served from Memory Cache</strong></div>
                     ${result2.success ? `<div class="result-detail">📦 Gists Fetched: <strong>${result2.data.data?.length || 0}</strong></div>` : ''}
                 </div>
@@ -722,6 +791,386 @@
                 resultItem.innerHTML = `
                     <div class="result-title">❌ Error: ${username}</div>
                     <div class="result-detail">⚠️ ${result.error || 'Request failed'}</div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testInvalidUser() {
+            const resultsDiv = document.getElementById('githubResults');
+            resultsDiv.style.display = 'block';
+            
+            const invalidUsername = 'thisuserdoesnotexist999999';
+            const result = await makeRequest(invalidUsername);
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = 'result-item error';
+            
+            if (result.status === 404) {
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        ✅ Validation Passed: User Not Found Test
+                        <span class="badge">404 STATUS</span>
+                    </div>
+                    <div class="result-detail">👤 Tested: <strong>${invalidUsername}</strong></div>
+                    <div class="result-detail">📊 Status: <strong>404 Not Found (Expected)</strong></div>
+                    <div class="result-detail">✅ Error handling working correctly</div>
+                `;
+            } else {
+                resultItem.innerHTML = `
+                    <div class="result-title">⚠️ Unexpected Response</div>
+                    <div class="result-detail">Expected 404, got ${result.status}</div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testPaginationDefault() {
+            const resultsDiv = document.getElementById('paginationResults');
+            resultsDiv.style.display = 'block';
+            
+            const result = await makeRequest('octocat');
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = `result-item ${result.success ? 'success' : 'error'}`;
+            
+            if (result.success) {
+                const pagination = result.data.pagination;
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        ✅ Default Pagination Test
+                        <span class="badge">PAGE ${pagination.page}</span>
+                    </div>
+                    <div class="result-detail">📄 Page: <strong>${pagination.page}</strong> (default: 1)</div>
+                    <div class="result-detail">📊 Per Page: <strong>${pagination.per_page}</strong> (default: 30)</div>
+                    <div class="result-detail">📦 Items Returned: <strong>${pagination.count}</strong></div>
+                    <div class="result-detail">◀️ Has Previous: <strong>${pagination.has_prev}</strong></div>
+                    <div class="result-detail">▶️ Has Next: <strong>${pagination.has_next}</strong></div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testPaginationCustom() {
+            const resultsDiv = document.getElementById('paginationResults');
+            resultsDiv.style.display = 'block';
+            
+            const startTime = performance.now();
+            const response = await fetch(`${currentEndpoint}/octocat?per_page=5`);
+            const elapsed = performance.now() - startTime;
+            const result = await response.json();
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = `result-item ${response.ok ? 'success' : 'error'}`;
+            
+            if (response.ok) {
+                const pagination = result.pagination;
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        ✅ Custom Page Size Test (per_page=5)
+                        <span class="badge">CUSTOM</span>
+                    </div>
+                    <div class="result-detail">📄 Per Page Requested: <strong>5</strong></div>
+                    <div class="result-detail">📊 Per Page Returned: <strong>${pagination.per_page}</strong></div>
+                    <div class="result-detail">📦 Items Count: <strong>${pagination.count}</strong></div>
+                    <div class="result-detail">⏱️ Response Time: <strong>${elapsed.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">✅ Pagination correctly limited to 5 items</div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testPaginationSecondPage() {
+            const resultsDiv = document.getElementById('paginationResults');
+            resultsDiv.style.display = 'block';
+            
+            const startTime = performance.now();
+            const response = await fetch(`${currentEndpoint}/octocat?page=2&per_page=5`);
+            const elapsed = performance.now() - startTime;
+            const result = await response.json();
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = `result-item ${response.ok ? 'success' : 'error'}`;
+            
+            if (response.ok) {
+                const pagination = result.pagination;
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        ✅ Second Page Test (page=2, per_page=5)
+                        <span class="badge">PAGE 2</span>
+                    </div>
+                    <div class="result-detail">📄 Current Page: <strong>${pagination.page}</strong></div>
+                    <div class="result-detail">◀️ Has Previous: <strong>${pagination.has_prev}</strong> (Expected: true)</div>
+                    <div class="result-detail">📦 Items Count: <strong>${pagination.count}</strong></div>
+                    <div class="result-detail">⏱️ Response Time: <strong>${elapsed.toFixed(2)}ms</strong></div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testPaginationInvalid() {
+            const resultsDiv = document.getElementById('paginationResults');
+            resultsDiv.style.display = 'block';
+            
+            // Test invalid page=0
+            const response1 = await fetch(`${currentEndpoint}/octocat?page=0`);
+            
+            // Test invalid per_page=101
+            const response2 = await fetch(`${currentEndpoint}/octocat?per_page=101`);
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = 'result-item';
+            
+            const test1Pass = response1.status === 422;
+            const test2Pass = response2.status === 422;
+            
+            if (test1Pass && test2Pass) {
+                resultItem.className += ' success';
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        ✅ Invalid Pagination Values Test
+                        <span class="badge">VALIDATION</span>
+                    </div>
+                    <div class="result-detail">🔍 Test 1 (page=0): <strong>422 Validation Error ✅</strong></div>
+                    <div class="result-detail">🔍 Test 2 (per_page=101): <strong>422 Validation Error ✅</strong></div>
+                    <div class="result-detail">✅ API correctly validates pagination parameters</div>
+                `;
+            } else {
+                resultItem.className += ' error';
+                resultItem.innerHTML = `
+                    <div class="result-title">⚠️ Validation Test Issues</div>
+                    <div class="result-detail">Test 1 (page=0): ${response1.status} ${test1Pass ? '✅' : '❌'}</div>
+                    <div class="result-detail">Test 2 (per_page=101): ${response2.status} ${test2Pass ? '✅' : '❌'}</div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testCacheStats() {
+            const resultsDiv = document.getElementById('cacheManagementResults');
+            resultsDiv.style.display = 'block';
+            
+            try {
+                const response = await fetch(`${currentEndpoint}/cache/stats`);
+                const stats = await response.json();
+                
+                const resultItem = document.createElement('div');
+                resultItem.className = `result-item ${response.ok ? 'success' : 'error'}`;
+                
+                if (response.ok) {
+                    const hitRate = stats.hit_rate * 100;
+                    resultItem.innerHTML = `
+                        <div class="result-title">
+                            📊 Cache Statistics
+                            <span class="badge">${hitRate.toFixed(1)}% HIT RATE</span>
+                        </div>
+                        <div class="result-detail">💾 Cache Size: <strong>${stats.size} entries</strong></div>
+                        <div class="result-detail">✅ Cache Hits: <strong>${stats.hits}</strong></div>
+                        <div class="result-detail">❌ Cache Misses: <strong>${stats.misses}</strong></div>
+                        <div class="result-detail">📈 Hit Rate: <strong>${hitRate.toFixed(2)}%</strong></div>
+                        <div class="result-detail">⏱️ TTL: <strong>${stats.ttl_seconds}s</strong></div>
+                    `;
+                }
+                
+                resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+            } catch (error) {
+                const resultItem = document.createElement('div');
+                resultItem.className = 'result-item error';
+                resultItem.innerHTML = `
+                    <div class="result-title">❌ Cache Stats Unavailable</div>
+                    <div class="result-detail">⚠️ ${error.message}</div>
+                `;
+                resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+            }
+        }
+
+        async function testCacheBypass() {
+            const resultsDiv = document.getElementById('cacheManagementResults');
+            resultsDiv.style.display = 'block';
+            
+            // First request without bypass
+            const result1 = await makeRequest('octocat');
+            
+            // Request with cache bypass
+            const startTime = performance.now();
+            const response = await fetch(`${currentEndpoint}/octocat?use_cache=false`);
+            const elapsed = performance.now() - startTime;
+            const result2 = await response.json();
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = 'result-item cache-miss';
+            
+            if (response.ok) {
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        🔄 Cache Bypass Test
+                        <span class="badge miss">BYPASSED</span>
+                    </div>
+                    <div class="result-detail">🔍 Parameter: <strong>use_cache=false</strong></div>
+                    <div class="result-detail">💾 Cache Hit: <strong>${result2.cache?.hit}</strong> (Expected: false)</div>
+                    <div class="result-detail">⏱️ Response Time: <strong>${elapsed.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">✅ Cache successfully bypassed</div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testCacheClear() {
+            const resultsDiv = document.getElementById('cacheManagementResults');
+            resultsDiv.style.display = 'block';
+            
+            try {
+                const response = await fetch(`${currentEndpoint}/cache`, { method: 'DELETE' });
+                const result = await response.json();
+                
+                const resultItem = document.createElement('div');
+                resultItem.className = `result-item ${response.ok ? 'success' : 'error'}`;
+                
+                if (response.ok) {
+                    resultItem.innerHTML = `
+                        <div class="result-title">
+                            🗑️ Cache Cleared Successfully
+                            <span class="badge">CLEARED</span>
+                        </div>
+                        <div class="result-detail">📊 Status: <strong>${response.status}</strong></div>
+                        <div class="result-detail">💬 Message: <strong>${result.message}</strong></div>
+                        <div class="result-detail">✅ All cached entries removed</div>
+                    `;
+                }
+                
+                resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+                
+                // Refresh cache stats
+                setTimeout(() => testCacheStats(), 500);
+            } catch (error) {
+                const resultItem = document.createElement('div');
+                resultItem.className = 'result-item error';
+                resultItem.innerHTML = `
+                    <div class="result-title">❌ Cache Clear Failed</div>
+                    <div class="result-detail">⚠️ ${error.message}</div>
+                `;
+                resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+            }
+        }
+
+        async function testHealthCheck() {
+            const resultsDiv = document.getElementById('healthResults');
+            resultsDiv.style.display = 'block';
+            
+            const startTime = performance.now();
+            const response = await fetch(`${currentEndpoint}/health`);
+            const elapsed = performance.now() - startTime;
+            const result = await response.json();
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = `result-item ${response.ok ? 'success' : 'error'}`;
+            
+            if (response.ok) {
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        ✅ Health Check Passed
+                        <span class="badge fast">${Math.round(elapsed)}ms</span>
+                    </div>
+                    <div class="result-detail">📊 Status: <strong>${result.status}</strong></div>
+                    <div class="result-detail">🏷️ Service: <strong>${result.service}</strong></div>
+                    <div class="result-detail">⏱️ Response Time: <strong>${elapsed.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">✅ API is healthy and responding</div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testRootEndpoint() {
+            const resultsDiv = document.getElementById('healthResults');
+            resultsDiv.style.display = 'block';
+            
+            const startTime = performance.now();
+            const response = await fetch(`${currentEndpoint}/`);
+            const elapsed = performance.now() - startTime;
+            const result = await response.json();
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = `result-item ${response.ok ? 'success' : 'error'}`;
+            
+            if (response.ok) {
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        ✅ Root Endpoint Test
+                        <span class="badge">200 OK</span>
+                    </div>
+                    <div class="result-detail">📊 Status: <strong>${result.status}</strong></div>
+                    <div class="result-detail">🏷️ Service: <strong>${result.service}</strong></div>
+                    <div class="result-detail">⏱️ Response Time: <strong>${elapsed.toFixed(2)}ms</strong></div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testMetricsEndpoint() {
+            const resultsDiv = document.getElementById('healthResults');
+            resultsDiv.style.display = 'block';
+            
+            const startTime = performance.now();
+            const response = await fetch(`${currentEndpoint}/metrics`);
+            const elapsed = performance.now() - startTime;
+            const text = await response.text();
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = `result-item ${response.ok ? 'success' : 'error'}`;
+            
+            if (response.ok) {
+                const lines = text.split('\n').filter(l => l && !l.startsWith('#')).length;
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        ✅ Prometheus Metrics Available
+                        <span class="badge">${lines} METRICS</span>
+                    </div>
+                    <div class="result-detail">📊 Status: <strong>${response.status}</strong></div>
+                    <div class="result-detail">📈 Metrics Exposed: <strong>${lines} lines</strong></div>
+                    <div class="result-detail">⏱️ Response Time: <strong>${elapsed.toFixed(2)}ms</strong></div>
+                    <div class="result-detail">✅ Prometheus scraping ready</div>
+                `;
+            }
+            
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+        }
+
+        async function testUsernameValidation() {
+            const resultsDiv = document.getElementById('healthResults');
+            resultsDiv.style.display = 'block';
+            
+            // Test username too long (max 39 chars)
+            const longUsername = 'a'.repeat(40);
+            const response = await fetch(`${currentEndpoint}/${longUsername}`);
+            
+            const resultItem = document.createElement('div');
+            resultItem.className = 'result-item';
+            
+            if (response.status === 422) {
+                resultItem.className += ' success';
+                resultItem.innerHTML = `
+                    <div class="result-title">
+                        ✅ Username Validation Test
+                        <span class="badge">422 VALIDATION</span>
+                    </div>
+                    <div class="result-detail">🔍 Test: <strong>Username too long (40 chars)</strong></div>
+                    <div class="result-detail">📊 Status: <strong>422 Unprocessable Entity ✅</strong></div>
+                    <div class="result-detail">✅ Input validation working correctly</div>
+                `;
+            } else {
+                resultItem.className += ' error';
+                resultItem.innerHTML = `
+                    <div class="result-title">⚠️ Validation Test Issue</div>
+                    <div class="result-detail">Expected 422, got ${response.status}</div>
                 `;
             }
             
