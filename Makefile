@@ -28,7 +28,7 @@ serve:
 	$(PYTHON) start_all_servers.py
 
 steus:
-    $(PYTHON) start_all_servers.py
+	$(PYTHON) start_all_servers.py
 
 install:
 	$(PIP) install -r requirements.txt
