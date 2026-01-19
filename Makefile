@@ -27,6 +27,9 @@ serve:
 	@echo "Starting local servers..."
 	$(PYTHON) start_all_servers.py
 
+steus:
+    $(PYTHON) start_all_servers.py
+
 install:
 	$(PIP) install -r requirements.txt
 	$(PIP) install -r requirements-dev.txt
@@ -77,3 +80,5 @@ clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
+
+
